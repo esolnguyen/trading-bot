@@ -1,0 +1,144 @@
+/* Trading Bot Dashboard — Dark Theme */
+:root {
+  --bg-primary: #0d1117;
+  --bg-secondary: #161b22;
+  --bg-card: #1f2937;
+  --text-primary: #e6edf3;
+  --text-muted: #8b949e;
+  --accent: #58a6ff;
+  --success: #3fb950;
+  --warning: #d29922;
+  --danger: #f85149;
+  --border: #30363d;
+  --sidebar-width: 200px;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  display: flex;
+  min-height: 100vh;
+}
+
+/* Sidebar */
+.sidebar {
+  width: var(--sidebar-width);
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  top: 0; left: 0; bottom: 0;
+  overflow-y: auto;
+}
+.sidebar-header { padding: 1rem; border-bottom: 1px solid var(--border); }
+.sidebar-header h2 { font-size: 0.9rem; color: var(--accent); text-transform: uppercase; letter-spacing: 0.1em; }
+.nav-list { list-style: none; padding: 0.5rem 0; }
+.nav-btn {
+  width: 100%; text-align: left; background: none; border: none;
+  color: var(--text-muted); padding: 0.6rem 1rem; cursor: pointer;
+  font-size: 0.875rem; border-radius: 4px; transition: background 0.15s;
+}
+.nav-btn:hover, .nav-btn.active { background: var(--bg-card); color: var(--text-primary); }
+.nav-btn.active { color: var(--accent); font-weight: 600; }
+
+/* Content */
+.content {
+  margin-left: var(--sidebar-width);
+  padding: 1.5rem;
+  flex: 1;
+  overflow-x: hidden;
+}
+
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+.tab-panel h1 { font-size: 1.25rem; margin-bottom: 1rem; color: var(--text-primary); }
+
+/* KPI grid */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+.kpi-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+}
+.kpi-label { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+.kpi-value { font-size: 1.25rem; font-weight: 600; margin-top: 0.25rem; }
+.kpi-value.positive { color: var(--success); }
+.kpi-value.negative { color: var(--danger); }
+.kpi-value.neutral { color: var(--text-primary); }
+
+/* Panels */
+.panel-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+.panel-title { font-size: 0.9rem; font-weight: 600; margin-bottom: 0.75rem; color: var(--accent); }
+
+/* Log viewer */
+.log-viewer {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem;
+  font-family: "SF Mono", "Fira Code", monospace;
+  font-size: 0.8rem;
+  line-height: 1.6;
+  max-height: 600px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--text-primary);
+}
+
+/* Stats grid */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 0.75rem;
+}
+.stat-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem;
+}
+.stat-label { font-size: 0.75rem; color: var(--text-muted); }
+.stat-value { font-size: 1rem; font-weight: 600; margin-top: 0.25rem; }
+
+/* News cards */
+.news-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+.news-title { font-weight: 600; }
+.news-meta { font-size: 0.75rem; color: var(--text-muted); margin-top: 0.25rem; }
+
+/* Visuals grid */
+.visuals-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 1rem;
+}
+.visual-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem; }
+.visual-card img { width: 100%; border-radius: 4px; }
+
+/* Table */
+table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+th, td { padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); text-align: left; }
+th { color: var(--text-muted); font-weight: 500; font-size: 0.75rem; text-transform: uppercase; }
+tr:hover td { background: var(--bg-secondary); }
