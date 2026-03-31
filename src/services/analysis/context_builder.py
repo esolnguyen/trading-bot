@@ -22,11 +22,14 @@ class ContextBuilder:
         brain_service: Optional[Any] = None,
         trading_strategy: Optional[Any] = None,
         memory_service: Optional[Any] = None,
+        cycle_classifier: Optional[Any] = None,
     ) -> None:
         self.settings = settings
         self._brain_service = brain_service
         self._trading_strategy = trading_strategy
         self._memory_service = memory_service
+        self._cycle_classifier = cycle_classifier
+        self._regime_suffix: str = ""  # updated by TradingLoop daily
 
     def build(
         self,
@@ -39,8 +42,9 @@ class ContextBuilder:
         memory_context: Optional[str] = None,
         brain_context: Optional[str] = None,
         dynamic_thresholds: Optional[dict[str, Any]] = None,
+        ml_context: Optional[str] = None,
     ) -> tuple[str, str]:
-        system_prompt = build_system_prompt(self.settings.max_order_usdt)
+        system_prompt = build_system_prompt(self.settings.max_order_usdt, self._regime_suffix)
         user_message = self._build_user_message(
             snapshots,
             analyses,
@@ -50,6 +54,7 @@ class ContextBuilder:
             memory_context=memory_context,
             brain_context=brain_context,
             dynamic_thresholds=dynamic_thresholds,
+            ml_context=ml_context,
         )
         return system_prompt, user_message
 
@@ -64,6 +69,7 @@ class ContextBuilder:
         memory_context: Optional[str] = None,
         brain_context: Optional[str] = None,
         dynamic_thresholds: Optional[dict[str, Any]] = None,
+        ml_context: Optional[str] = None,
     ) -> str:
         symbols = list(snapshots.keys())
 
@@ -83,6 +89,9 @@ class ContextBuilder:
 
         if brain_context:
             sections.append((3, "Adaptive Brain Insights", f"## Adaptive Brain Insights\n{brain_context.strip()}"))
+
+        if ml_context:
+            sections.append((3, "ML Context", ml_context.strip()))
 
         if dynamic_thresholds:
             threshold_lines = ["## Dynamic Thresholds"] + [f"- {k}: {v}" for k, v in dynamic_thresholds.items()]

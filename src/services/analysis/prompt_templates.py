@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 
-def build_system_prompt(max_order_usdt: float) -> str:
-    """Return the system prompt contract for the trading LLM."""
-    return (
+def build_system_prompt(max_order_usdt: float, regime_suffix: str = "") -> str:
+    """Return the system prompt contract for the trading LLM.
+
+    Args:
+        max_order_usdt: Maximum order size in USDT.
+        regime_suffix: Optional macro regime instruction injected by CycleClassifier.
+    """
+    base = (
         "You are an autonomous crypto trading agent.\n"
         "Allowed symbols: BTCUSDT, ETHUSDT only.\n"
         f"Max order size: {max_order_usdt} USDT.\n"
@@ -18,3 +23,4 @@ def build_system_prompt(max_order_usdt: float) -> str:
         'For HOLD, include: {"action":"HOLD","symbol","reasoning"}.\n'
         "Reasoning must briefly cite the strongest technical or contextual evidence."
     )
+    return base + regime_suffix

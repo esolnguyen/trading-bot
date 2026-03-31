@@ -170,6 +170,60 @@ class Settings:
     trade_memory_max_entries: int = 500
 
     # ------------------------------------------------------------------ #
+    # Risk guards
+    # ------------------------------------------------------------------ #
+    max_daily_loss_pct: float = 0.05          # halt trading after losing this % of capital in one day
+    max_consecutive_losses: int = 3           # halt trading after this many losses in a row
+    min_confidence_threshold: float = 0.0    # skip LLM decisions below this confidence (0-100); 0 = disabled
+
+    # ------------------------------------------------------------------ #
+    # Trailing stop
+    # ------------------------------------------------------------------ #
+    trailing_stop_enabled: bool = False
+    trailing_stop_activation_pct: float = 0.01   # profit % required to activate trailing stop
+    trailing_stop_distance_pct: float = 0.005    # trail distance from best price
+
+    # ------------------------------------------------------------------ #
+    # Partial take-profit
+    # ------------------------------------------------------------------ #
+    partial_tp_enabled: bool = False
+    partial_tp1_atr_multiplier: float = 2.0  # TP1 = entry ± (ATR × this); full TP uses 4x
+    partial_tp1_size_pct: float = 0.5        # fraction of position closed at TP1
+
+    # ------------------------------------------------------------------ #
+    # Regime detection
+    # ------------------------------------------------------------------ #
+    choppiness_threshold: float = 61.8       # skip entry signals when choppiness > this
+
+    # ------------------------------------------------------------------ #
+    # Multi-timeframe confirmation
+    # ------------------------------------------------------------------ #
+    htf_timeframe: str = "4h"
+    htf_confirmation_enabled: bool = False   # require HTF trend agreement before entry
+
+    # ------------------------------------------------------------------ #
+    # Execution validation
+    # ------------------------------------------------------------------ #
+    max_slippage_pct: float = 0.005          # warn if executed price deviates > 0.5% from decision price
+
+    # ------------------------------------------------------------------ #
+    # Fast position monitor
+    # ------------------------------------------------------------------ #
+    position_monitor_enabled: bool = True
+    position_monitor_interval: int = 15     # seconds between fast SL price checks (independent of main cycle)
+
+    # ------------------------------------------------------------------ #
+    # Spot bracket orders
+    # ------------------------------------------------------------------ #
+    spot_sl_limit_offset_pct: float = 0.01  # STOP_LOSS_LIMIT price = stopPrice × (1 - this); gives 1% fill room
+    spot_tp_limit_offset_pct: float = 0.002 # TAKE_PROFIT_LIMIT price = stopPrice × (1 - this) for sells
+
+    # ------------------------------------------------------------------ #
+    # ML / OHLCV
+    # ------------------------------------------------------------------ #
+    ml_timeframe: str = "4h"   # candle resolution used for ML training & scoring: 15m | 1h | 4h
+
+    # ------------------------------------------------------------------ #
     # Debug / directories
     # ------------------------------------------------------------------ #
     logger_debug: bool = False
@@ -319,6 +373,33 @@ class Settings:
             trading_symbols=_parse_list(os.getenv("TRADING_SYMBOLS"), default=["BTCUSDT", "ETHUSDT"]),
             limit_order_timeout_seconds=_parse_int(os.getenv("LIMIT_ORDER_TIMEOUT_SECONDS"), default=300),
             trade_memory_max_entries=_parse_int(os.getenv("TRADE_MEMORY_MAX_ENTRIES"), default=500),
+            # Risk guards
+            max_daily_loss_pct=_parse_float(os.getenv("MAX_DAILY_LOSS_PCT"), default=0.05),
+            max_consecutive_losses=_parse_int(os.getenv("MAX_CONSECUTIVE_LOSSES"), default=3),
+            min_confidence_threshold=_parse_float(os.getenv("MIN_CONFIDENCE_THRESHOLD"), default=0.0),
+            # Trailing stop
+            trailing_stop_enabled=_parse_bool(os.getenv("TRAILING_STOP_ENABLED"), default=False),
+            trailing_stop_activation_pct=_parse_float(os.getenv("TRAILING_STOP_ACTIVATION_PCT"), default=0.01),
+            trailing_stop_distance_pct=_parse_float(os.getenv("TRAILING_STOP_DISTANCE_PCT"), default=0.005),
+            # Partial TP
+            partial_tp_enabled=_parse_bool(os.getenv("PARTIAL_TP_ENABLED"), default=False),
+            partial_tp1_atr_multiplier=_parse_float(os.getenv("PARTIAL_TP1_ATR_MULTIPLIER"), default=2.0),
+            partial_tp1_size_pct=_parse_float(os.getenv("PARTIAL_TP1_SIZE_PCT"), default=0.5),
+            # Regime detection
+            choppiness_threshold=_parse_float(os.getenv("CHOPPINESS_THRESHOLD"), default=61.8),
+            # Multi-timeframe
+            htf_timeframe=os.getenv("HTF_TIMEFRAME", "4h").strip(),
+            htf_confirmation_enabled=_parse_bool(os.getenv("HTF_CONFIRMATION_ENABLED"), default=False),
+            # Execution validation
+            max_slippage_pct=_parse_float(os.getenv("MAX_SLIPPAGE_PCT"), default=0.005),
+            # Fast position monitor
+            position_monitor_enabled=_parse_bool(os.getenv("POSITION_MONITOR_ENABLED"), default=True),
+            position_monitor_interval=_parse_int(os.getenv("POSITION_MONITOR_INTERVAL"), default=15),
+            # Spot bracket orders
+            spot_sl_limit_offset_pct=_parse_float(os.getenv("SPOT_SL_LIMIT_OFFSET_PCT"), default=0.01),
+            spot_tp_limit_offset_pct=_parse_float(os.getenv("SPOT_TP_LIMIT_OFFSET_PCT"), default=0.002),
+            # ML / OHLCV
+            ml_timeframe=os.getenv("ML_TIMEFRAME", "4h").strip().lower(),
             # Debug / directories
             logger_debug=_parse_bool(os.getenv("LOGGER_DEBUG"), default=False),
             debug_save_charts=_parse_bool(os.getenv("DEBUG_SAVE_CHARTS"), default=False),
@@ -338,6 +419,14 @@ class Settings:
             rag_density_boost_multiplier=_parse_float(os.getenv("RAG_DENSITY_BOOST_MULTIPLIER"), default=1.2),
             rag_cooccurrence_multiplier=_parse_float(os.getenv("RAG_COOCCURRENCE_MULTIPLIER"), default=1.5),
         )
+
+    def ohlcv_csv_path(self, symbol: str, interval: str) -> str:
+        """Return the canonical path for an OHLCV CSV file.
+
+        e.g. ohlcv_csv_path("BTC/USDT", "4h") → "data/ohlcv/btcusdt_4h.csv"
+        """
+        sym = symbol.replace("/", "").lower()
+        return f"{self.data_dir}/ohlcv/{sym}_{interval}.csv"
 
     def get_model_config(self, model_name: str, overrides: Dict[str, Any] | None = None) -> Dict[str, Any]:
         """Return model config dict appropriate for the given model name."""
@@ -405,6 +494,9 @@ class Settings:
     def _validate_ranges(self) -> None:
         if self.provider not in _VALID_PROVIDERS:
             raise ValueError("provider")
+
+        if self.ml_timeframe not in {"15m", "1h", "4h"}:
+            raise ValueError("ml_timeframe must be one of: 15m, 1h, 4h")
 
         if self.binance_product not in {"spot", "usdt_futures"}:
             raise ValueError("binance_product")

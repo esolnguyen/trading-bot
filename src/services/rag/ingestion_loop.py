@@ -29,11 +29,13 @@ class IngestionLoop:
         sources: dict[str, Any] | None = None,
         logger: logging.Logger | None = None,
         sleep_func: Any = asyncio.sleep,
+        sentiment_scorer: Any | None = None,
     ) -> None:
         self.store = store
         self.settings = settings
         self.logger = logger or logging.getLogger(__name__)
         self.sleep_func = sleep_func
+        self.sentiment_scorer = sentiment_scorer
         self.sources = sources or {
             "news": CryptoCompareNewsSource(settings.cryptocompare_api_key),
             "coingecko": CoinGeckoFearGreedSource(),
@@ -74,10 +76,17 @@ class IngestionLoop:
                 if self.store.exists("news", document_id):
                     continue
 
+                # Score sentiment at ingestion time (FinBERT B1)
+                if self.sentiment_scorer is not None:
+                    text_for_scoring = f"{prepared.get('title', '')} {prepared.get('body', '')[:400]}"
+                    score = self.sentiment_scorer.score(text_for_scoring)
+                    if score is not None:
+                        prepared["sentiment_score"] = score
+
                 self.store.add_document(
                     "news",
                     document_id=document_id,
-                    text=f"{prepared.get('title', '')} {prepared.get('body', '')[:500]}",
+                    text=f"{prepared.get('title', '')} {prepared.get('body', '')}",
                     metadata=prepared,
                 )
         except requests.HTTPError as exc:

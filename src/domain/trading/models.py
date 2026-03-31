@@ -96,6 +96,12 @@ class Position(SerializableMixin):
     # Performance metrics
     max_drawdown_pct: float = 0.0   # Max adverse excursion (MAE)
     max_profit_pct: float = 0.0     # Max favorable excursion (MFE)
+    # Trailing stop state (0.0 = not yet activated)
+    trailing_stop_price: float = 0.0
+    # Partial TP state
+    tp1_price: float = 0.0          # First TP level (0.0 = not configured)
+    tp1_size_pct: float = 0.5       # Fraction of position to close at TP1
+    partial_tp1_hit: bool = False   # Whether TP1 was already triggered
 
     def calculate_pnl(self, current_price: float) -> float:
         """Calculate unrealized P&L percentage."""

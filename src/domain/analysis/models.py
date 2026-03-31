@@ -30,6 +30,11 @@ class IndicatorSet:
     ema_20: float
     ema_50: float
     volume_sma_20: float
+    # Extended indicators (have defaults so existing code continues to work)
+    atr: float = 0.0            # Average True Range (absolute price units)
+    adx: float = 0.0            # Average Directional Index (0-100)
+    obv_slope: float = 0.0      # On-Balance Volume linear slope (normalised)
+    choppiness: float = 50.0    # Choppiness Index (0-100; >61.8 = choppy market)
 
 
 @dataclass(slots=True)

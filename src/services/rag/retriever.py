@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from src.domain.analysis import TechnicalAnalysis
 from src.domain.market import MarketSnapshot
 from src.infrastructure.storage import ChromaStore
@@ -11,6 +13,14 @@ class RAGRetriever:
     """Fetch and format local Chroma context for the trading decision."""
 
     MAX_OUTPUT_CHARS = 4000
+    # Per-field character limits to prevent oversized docs from dominating the prompt
+    MAX_TITLE_CHARS = 120
+    MAX_BODY_CHARS = 300
+    MAX_NARRATIVE_CHARS = 400
+    MAX_REASONING_CHARS = 200
+    # Regex to strip control characters (keep printable ASCII and common unicode)
+    _CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
     SYMBOL_KEYWORDS = {
         "BTCUSDT": ("btc", "bitcoin"),
         "ETHUSDT": ("eth", "ethereum"),
@@ -39,6 +49,14 @@ class RAGRetriever:
             return "=== NO CONTEXT AVAILABLE ==="
         return content[: self.MAX_OUTPUT_CHARS]
 
+    @classmethod
+    def _sanitize(cls, text: str, max_chars: int) -> str:
+        """Strip control characters and truncate to prevent prompt injection."""
+        cleaned = cls._CONTROL_RE.sub(" ", str(text))
+        # Collapse runs of whitespace to single spaces
+        cleaned = " ".join(cleaned.split())
+        return cleaned[:max_chars]
+
     def _format_news_section(self, payload: dict, symbol: str) -> str:
         rows = self._pairs_from_query(payload)
         rows = self._filter_news_rows(rows, symbol)
@@ -48,10 +66,10 @@ class RAGRetriever:
         display_symbol = symbol.replace("USDT", "").replace("BUSD", "")
         lines = [f"=== RECENT NEWS ({display_symbol}) ==="]
         for index, (document, metadata) in enumerate(rows, start=1):
-            title = metadata.get("title", "Untitled")
-            source = metadata.get("source", "unknown")
-            published_at = metadata.get("published_at", "")
-            body = metadata.get("body", document or "")[:300]
+            title = self._sanitize(metadata.get("title", "Untitled"), self.MAX_TITLE_CHARS)
+            source = self._sanitize(metadata.get("source", "unknown"), 60)
+            published_at = self._sanitize(metadata.get("published_at", ""), 30)
+            body = self._sanitize(metadata.get("body", document or ""), self.MAX_BODY_CHARS)
             lines.append(f"[{index}] {title} — {source} ({published_at})")
             lines.append(body)
         return "\n".join(lines)
@@ -63,8 +81,8 @@ class RAGRetriever:
 
         lines = ["=== MACRO CONTEXT ==="]
         for index, (_document, metadata) in enumerate(rows, start=1):
-            source = metadata.get("source", "unknown")
-            narrative = metadata.get("narrative", "")
+            source = self._sanitize(metadata.get("source", "unknown"), 60)
+            narrative = self._sanitize(metadata.get("narrative", ""), self.MAX_NARRATIVE_CHARS)
             lines.append(f"[{index}] {source}: {narrative}")
         return "\n".join(lines)
 
@@ -80,12 +98,12 @@ class RAGRetriever:
 
         lines = ["=== SIMILAR PAST TRADES ==="]
         for index, (_document, metadata) in enumerate(rows, start=1):
-            symbol = metadata.get("symbol", "UNKNOWN")
-            action = metadata.get("action", "UNKNOWN")
-            timestamp = metadata.get("timestamp", "")
-            reasoning = str(metadata.get("reasoning", ""))[:200]
+            trade_symbol = self._sanitize(metadata.get("symbol", "UNKNOWN"), 20)
+            action = self._sanitize(metadata.get("action", "UNKNOWN"), 20)
+            timestamp = self._sanitize(metadata.get("timestamp", ""), 30)
+            reasoning = self._sanitize(str(metadata.get("reasoning", "")), self.MAX_REASONING_CHARS)
             pnl = metadata.get("outcome_pnl")
-            lines.append(f"[{index}] {symbol} {action} @ {timestamp}")
+            lines.append(f"[{index}] {trade_symbol} {action} @ {timestamp}")
             lines.append(f"Reasoning: {reasoning}")
             lines.append(f"Outcome PnL: {pnl} USDT")
         return "\n".join(lines)

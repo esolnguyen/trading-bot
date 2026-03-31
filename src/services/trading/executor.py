@@ -96,44 +96,112 @@ class Executor:
         entry_side: str,
         sl_price: float,
         tp_price: float,
+        quantity: float = 0.0,
     ) -> tuple[str | None, str | None]:
-        """Place STOP_MARKET (SL) and TAKE_PROFIT_MARKET (TP) reduce-only orders.
+        """Place exchange-native SL and TP orders to protect an open position.
 
-        Both use ``closePosition=true`` so Binance closes the entire position when
-        triggered.  Returns ``(sl_order_id, tp_order_id)``; either may be None if
-        the individual order fails (entry position is still open — the error is
-        logged and the bot will attempt a bot-managed exit on the next reconcile).
+        For **futures**: places STOP_MARKET + TAKE_PROFIT_MARKET with
+        ``closePosition=true`` (no quantity needed).
+
+        For **spot**: places STOP_LOSS_LIMIT + TAKE_PROFIT_LIMIT with the given
+        ``quantity``.  A small offset below/above the trigger price is applied so
+        the limit order has a realistic chance of filling in a fast-moving market.
+
+        Returns ``(sl_order_id, tp_order_id)``; either may be None if the
+        individual placement fails — the error is logged and the position monitor
+        will fall back to software SL management.
         """
         client = await self._ensure_api_client()
         close_side = "SELL" if entry_side == "BUY" else "BUY"
+        is_futures = getattr(self.settings, "binance_product", "spot") == "usdt_futures"
         sl_order_id: str | None = None
         tp_order_id: str | None = None
 
-        try:
-            sl_data = client.create_order(
-                symbol=symbol,
-                side=close_side,
-                type="STOP_MARKET",
-                stopPrice=f"{sl_price:.2f}",
-                closePosition="true",
-            )
-            sl_order_id = str(sl_data.get("orderId", "")) or None
-            logger.info("SL bracket placed: %s stopPrice=%.2f order=%s", symbol, sl_price, sl_order_id)
-        except Exception as exc:  # noqa: BLE001
-            logger.error("Failed to place SL bracket for %s: %s", symbol, exc)
+        if is_futures:
+            # --- Futures: reduce-only market orders, no quantity required ---
+            try:
+                sl_data = client.create_order(
+                    symbol=symbol,
+                    side=close_side,
+                    type="STOP_MARKET",
+                    stopPrice=f"{sl_price:.2f}",
+                    closePosition="true",
+                )
+                sl_order_id = str(sl_data.get("orderId", "")) or None
+                logger.info("Futures SL bracket placed: %s stopPrice=%.2f order=%s", symbol, sl_price, sl_order_id)
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Failed to place futures SL bracket for %s: %s", symbol, exc)
 
-        try:
-            tp_data = client.create_order(
-                symbol=symbol,
-                side=close_side,
-                type="TAKE_PROFIT_MARKET",
-                stopPrice=f"{tp_price:.2f}",
-                closePosition="true",
-            )
-            tp_order_id = str(tp_data.get("orderId", "")) or None
-            logger.info("TP bracket placed: %s stopPrice=%.2f order=%s", symbol, tp_price, tp_order_id)
-        except Exception as exc:  # noqa: BLE001
-            logger.error("Failed to place TP bracket for %s: %s", symbol, exc)
+            try:
+                tp_data = client.create_order(
+                    symbol=symbol,
+                    side=close_side,
+                    type="TAKE_PROFIT_MARKET",
+                    stopPrice=f"{tp_price:.2f}",
+                    closePosition="true",
+                )
+                tp_order_id = str(tp_data.get("orderId", "")) or None
+                logger.info("Futures TP bracket placed: %s stopPrice=%.2f order=%s", symbol, tp_price, tp_order_id)
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Failed to place futures TP bracket for %s: %s", symbol, exc)
+
+        else:
+            # --- Spot: limit orders at a small offset from the trigger price ---
+            if quantity <= 0:
+                logger.warning(
+                    "Spot bracket orders require quantity > 0 for %s — skipping (software SL active)",
+                    symbol,
+                )
+                return None, None
+
+            sl_offset = getattr(self.settings, "spot_sl_limit_offset_pct", 0.01)
+            tp_offset = getattr(self.settings, "spot_tp_limit_offset_pct", 0.002)
+            qty_str = f"{quantity:.8f}"
+
+            # SL: sell limit placed below trigger so it has room to fill on the way down
+            if close_side == "SELL":
+                sl_limit_price = sl_price * (1.0 - sl_offset)
+                tp_limit_price = tp_price * (1.0 - tp_offset)
+            else:
+                # Closing a short: BUY limit placed above trigger
+                sl_limit_price = sl_price * (1.0 + sl_offset)
+                tp_limit_price = tp_price * (1.0 + tp_offset)
+
+            try:
+                sl_data = client.create_order(
+                    symbol=symbol,
+                    side=close_side,
+                    type="STOP_LOSS_LIMIT",
+                    quantity=qty_str,
+                    stopPrice=f"{sl_price:.2f}",
+                    price=f"{sl_limit_price:.2f}",
+                    timeInForce="GTC",
+                )
+                sl_order_id = str(sl_data.get("orderId", "")) or None
+                logger.info(
+                    "Spot SL bracket placed: %s stopPrice=%.2f limitPrice=%.2f qty=%s order=%s",
+                    symbol, sl_price, sl_limit_price, qty_str, sl_order_id,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Failed to place spot SL bracket for %s: %s", symbol, exc)
+
+            try:
+                tp_data = client.create_order(
+                    symbol=symbol,
+                    side=close_side,
+                    type="TAKE_PROFIT_LIMIT",
+                    quantity=qty_str,
+                    stopPrice=f"{tp_price:.2f}",
+                    price=f"{tp_limit_price:.2f}",
+                    timeInForce="GTC",
+                )
+                tp_order_id = str(tp_data.get("orderId", "")) or None
+                logger.info(
+                    "Spot TP bracket placed: %s stopPrice=%.2f limitPrice=%.2f qty=%s order=%s",
+                    symbol, tp_price, tp_limit_price, qty_str, tp_order_id,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Failed to place spot TP bracket for %s: %s", symbol, exc)
 
         return sl_order_id, tp_order_id
 

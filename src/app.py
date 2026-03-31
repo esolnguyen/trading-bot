@@ -19,7 +19,16 @@ from src.services.analysis import (
     PatternAnalyzer,
     TechnicalAnalyzer,
 )
+from src.services.analysis.multi_timeframe_analyzer import MultiTimeframeAnalyzer
+from src.services.ml.historical_percentile import HistoricalPercentileScorer
+from src.services.ml.key_level_detector import KeyLevelDetector
+from src.services.ml.cycle_classifier import CycleClassifier
+from src.services.ml.direction_classifier import DirectionClassifier
+from src.services.ml.outcome_predictor import OutcomePredictor
+from src.services.ml.anomaly_detector import AnomalyDetector
+from src.services.ml.sentiment_scorer import SentimentScorer
 from src.services.rag import IngestionLoop, MemoryManager, RAGRetriever
+from src.services.rag.ohlcv_writer import OHLCVWriter
 from src.services.trading import Executor, RiskManager, TradingLoop
 
 
@@ -133,13 +142,30 @@ def build_runtime(settings: Settings) -> dict[str, Any]:
     chart_gen = ChartGenerator()
     retriever = RAGRetriever(store)
     llm = LLMManager(settings)
-    risk = RiskManager(settings)
     executor = Executor(settings)
     memory = MemoryManager(store, settings=settings)
     persistence = Persistence(data_dir="data")
     console_notifier = ConsoleNotifier()
     logger_notifier = LoggerNotifier(logger)
-    ingestion = IngestionLoop(store, settings)
+
+    # ML services — all optional, degrade gracefully if model files missing
+    percentile_scorer    = HistoricalPercentileScorer(
+        csv_path=settings.ohlcv_csv_path(settings.crypto_pair, settings.ml_timeframe),
+        timeframe=settings.ml_timeframe,
+    )
+    key_level_detector   = KeyLevelDetector()
+    cycle_classifier     = CycleClassifier(timeframe=settings.ml_timeframe)
+    direction_classifier = DirectionClassifier(timeframe=settings.ml_timeframe)
+    outcome_predictor    = OutcomePredictor()
+    anomaly_detector     = AnomalyDetector(timeframe=settings.ml_timeframe)
+    sentiment_scorer     = SentimentScorer()
+    multi_tf_analyzer    = MultiTimeframeAnalyzer(feed)
+    ohlcv_writer         = OHLCVWriter(
+        path=settings.ohlcv_csv_path(settings.crypto_pair, settings.ml_timeframe)
+    )
+
+    risk = RiskManager(settings, outcome_predictor=outcome_predictor)
+    ingestion = IngestionLoop(store, settings, sentiment_scorer=sentiment_scorer)
 
     # Advanced services (conditional on availability)
     vector_memory = _try_build_vector_memory(store)
@@ -155,6 +181,7 @@ def build_runtime(settings: Settings) -> dict[str, Any]:
         brain_service=brain_service,
         trading_strategy=trading_strategy,
         memory_service=memory_service,
+        cycle_classifier=cycle_classifier,
     )
 
     trading = TradingLoop(
@@ -177,12 +204,28 @@ def build_runtime(settings: Settings) -> dict[str, Any]:
         memory_service=memory_service,
         statistics_service=statistics_service,
         discord_notifier=discord_notifier,
+        anomaly_detector=anomaly_detector,
+        percentile_scorer=percentile_scorer,
+        direction_classifier=direction_classifier,
+        key_level_detector=key_level_detector,
+        cycle_classifier=cycle_classifier,
+        multi_tf_analyzer=multi_tf_analyzer,
+        ohlcv_writer=ohlcv_writer,
     )
 
     rt: dict[str, Any] = {
         "settings": settings,
         "store": store,
         "feed": feed,
+        "percentile_scorer": percentile_scorer,
+        "key_level_detector": key_level_detector,
+        "cycle_classifier": cycle_classifier,
+        "direction_classifier": direction_classifier,
+        "outcome_predictor": outcome_predictor,
+        "anomaly_detector": anomaly_detector,
+        "sentiment_scorer": sentiment_scorer,
+        "multi_tf_analyzer": multi_tf_analyzer,
+        "ohlcv_writer": ohlcv_writer,
         "aggregator": aggregator,
         "calculator": calculator,
         "tech_analyzer": tech_analyzer,
@@ -269,6 +312,12 @@ async def main(
         ),
         asyncio.create_task(trading.run(), name="trading-loop"),
     ]
+
+    if hasattr(trading, "run_position_monitor"):
+        tasks.append(asyncio.create_task(
+            _run_guarded("position-monitor", trading.run_position_monitor, logger_=active_logger),
+            name="position-monitor",
+        ))
 
     if discord_notifier is not None and hasattr(discord_notifier, "start"):
         tasks.append(asyncio.create_task(

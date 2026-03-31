@@ -48,9 +48,27 @@ class BinanceRestClient:
                 "User-Agent": "src-trading-bot/1.0",
             }
         )
+        self._time_offset_ms: int = 0
+        self._sync_server_time()
 
     def close_connection(self) -> None:
         self.session.close()
+
+    def _sync_server_time(self) -> None:
+        """Fetch Binance server time and compute local clock offset."""
+        time_path = "/fapi/v1/time" if self.product == "usdt_futures" else "/api/v3/time"
+        local_before = int(time.time() * 1000)
+        try:
+            resp = self.session.get(f"{self.base_url}{time_path}", timeout=self.timeout)
+            resp.raise_for_status()
+            server_time = resp.json()["serverTime"]
+            local_after = int(time.time() * 1000)
+            # Use midpoint of round-trip as local reference
+            local_mid = (local_before + local_after) // 2
+            self._time_offset_ms = server_time - local_mid
+        except Exception:
+            # If time sync fails, continue with zero offset and wider recvWindow
+            self._time_offset_ms = 0
 
     def get_ticker(self, symbol: str) -> dict[str, Any]:
         return self._request("GET", self._path("ticker/24hr"), params={"symbol": symbol}, signed=False)
@@ -58,11 +76,24 @@ class BinanceRestClient:
     def get_order_book(self, symbol: str, limit: int = 20) -> dict[str, Any]:
         return self._request("GET", self._path("depth"), params={"symbol": symbol, "limit": limit}, signed=False)
 
-    def get_klines(self, symbol: str, interval: str = "1h", limit: int = 200) -> list[list[Any]]:
+    def get_klines(
+        self,
+        symbol: str,
+        interval: str = "1h",
+        limit: int = 200,
+        endTime: int | None = None,
+        startTime: int | None = None,
+    ) -> list[list[Any]]:
         return self._request(
             "GET",
             self._path("klines"),
-            params={"symbol": symbol, "interval": interval, "limit": limit},
+            params={
+                "symbol": symbol,
+                "interval": interval,
+                "limit": limit,
+                "startTime": startTime,
+                "endTime": endTime,
+            },
             signed=False,
         )
 
@@ -98,11 +129,12 @@ class BinanceRestClient:
         *,
         params: dict[str, Any],
         signed: bool,
+        _retry: bool = True,
     ) -> Any:
         payload = {key: value for key, value in params.items() if value is not None}
         if signed:
-            payload["timestamp"] = int(time.time() * 1000)
-            payload.setdefault("recvWindow", 5000)
+            payload["timestamp"] = int(time.time() * 1000) + self._time_offset_ms
+            payload.setdefault("recvWindow", 10000)
             payload["signature"] = self._sign(payload)
 
         url = f"{self.base_url}{path}"
@@ -116,6 +148,16 @@ class BinanceRestClient:
 
         if response.ok:
             return response.json()
+
+        # On clock-skew error, re-sync once and retry
+        if _retry and signed and response.status_code == 400:
+            try:
+                body = response.json()
+            except Exception:
+                body = {}
+            if isinstance(body, dict) and body.get("code") == -1021:
+                self._sync_server_time()
+                return self._request(method, path, params=params, signed=signed, _retry=False)
 
         raise BinanceRestError(self._format_error(response))
 

@@ -180,6 +180,7 @@ cython_debug/
 chroma_db/
 data/
 logs/
+models/
 
 # Local benchmarking artifacts
 .benchmarks/

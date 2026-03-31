@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from src.core.config import Settings
 from src.domain.trading import Action, RiskValidationResult, TradeDecision
@@ -15,14 +15,46 @@ if TYPE_CHECKING:
 class RiskManager:
     """Validate, clamp, or block trade decisions using hard-coded rules."""
 
-    def __init__(self, settings: Settings, *, logger: logging.Logger | None = None) -> None:
+    # Pairs considered correlated — bot won't hold same-direction positions in both
+    CORRELATED_PAIRS: tuple[frozenset[str], ...] = (
+        frozenset({"BTCUSDT", "ETHUSDT"}),
+    )
+
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        logger: logging.Logger | None = None,
+        outcome_predictor: Any | None = None,
+    ) -> None:
         self.settings = settings
         self.logger = logger or logging.getLogger(__name__)
         self.ALLOWED_SYMBOLS: frozenset[str] = frozenset(
             getattr(settings, "trading_symbols", None) or ["BTCUSDT", "ETHUSDT"]
         )
+        self._outcome_predictor = outcome_predictor
 
-    def validate(self, decision: TradeDecision, balance: dict) -> RiskValidationResult:
+    def check_kill_switches(
+        self,
+        consecutive_losses: int,
+        daily_loss_pct: float,
+    ) -> tuple[bool, str]:
+        """Return (should_halt, reason) based on daily loss and streak limits.
+
+        Called at the start of each cycle before any analysis or execution.
+        """
+        max_losses = getattr(self.settings, "max_consecutive_losses", 3)
+        max_daily = getattr(self.settings, "max_daily_loss_pct", 0.05)
+
+        if consecutive_losses >= max_losses:
+            return True, f"max_consecutive_losses reached ({consecutive_losses}/{max_losses})"
+
+        if daily_loss_pct >= max_daily:
+            return True, f"max_daily_loss_pct reached ({daily_loss_pct:.2%} >= {max_daily:.2%})"
+
+        return False, ""
+
+    def validate(self, decision: TradeDecision, balance: dict, open_positions: Optional[Dict[str, Any]] = None) -> RiskValidationResult:
         dry_run = self.settings.bot_dry_run
 
         if not self.settings.bot_enabled:
@@ -39,6 +71,45 @@ class RiskManager:
         if decision.action == Action.HOLD:
             self.logger.debug("HOLD passthrough — no risk checks needed")
             return RiskValidationResult(decision=decision, dry_run=dry_run, status="passed")
+
+        # ML outcome gate (B3): block low-probability trades
+        if self._outcome_predictor is not None and decision.action in (Action.BUY, Action.SELL):
+            market_conditions = getattr(decision, "market_conditions", {}) or {}
+            should_block, win_prob = self._outcome_predictor.should_block(market_conditions)
+            if should_block and win_prob is not None:
+                self.logger.warning(
+                    "Risk rule triggered: outcome model win probability %.0f%% below threshold — HOLD",
+                    win_prob * 100,
+                )
+                return RiskValidationResult(
+                    decision=self._hold(decision, f"low_win_probability:{win_prob:.0%}"),
+                    dry_run=dry_run,
+                    status="blocked",
+                )
+
+        # Confidence threshold gate (only active when threshold > 0)
+        min_conf = getattr(self.settings, "min_confidence_threshold", 0.0)
+        if min_conf > 0 and decision.confidence < min_conf and decision.action not in (Action.CLOSE, Action.CLOSE_LONG, Action.CLOSE_SHORT):
+            self.logger.warning(
+                "Risk rule triggered: confidence %.1f < threshold %.1f; overriding to HOLD",
+                decision.confidence, min_conf,
+            )
+            return RiskValidationResult(
+                decision=self._hold(decision, f"low_confidence:{decision.confidence:.1f}<{min_conf:.1f}"),
+                dry_run=dry_run,
+                status="blocked",
+            )
+
+        # Correlation guard — don't open a correlated position in the same direction
+        if open_positions and decision.action in (Action.BUY, Action.SELL):
+            corr_block = self._check_correlation(decision, open_positions)
+            if corr_block:
+                self.logger.warning("Risk rule triggered: correlated position already open — %s", corr_block)
+                return RiskValidationResult(
+                    decision=self._hold(decision, f"correlated_position:{corr_block}"),
+                    dry_run=dry_run,
+                    status="blocked",
+                )
 
         if decision.symbol not in self.ALLOWED_SYMBOLS:
             self.logger.warning("Risk rule triggered: symbol %s is not allowed", decision.symbol)
@@ -261,3 +332,21 @@ class RiskManager:
         if ticker_price is not None:
             return float(ticker_price)
         return 0.0
+
+    def _check_correlation(self, decision: TradeDecision, open_positions: Dict[str, Any]) -> str:
+        """Return a description string if decision would create a correlated exposure, else empty string."""
+        new_side = decision.action.value  # "BUY" or "SELL"
+        for group in self.CORRELATED_PAIRS:
+            if decision.symbol not in group:
+                continue
+            for other_sym in group:
+                if other_sym == decision.symbol:
+                    continue
+                pos = open_positions.get(other_sym)
+                if pos is None:
+                    continue
+                existing_side = pos.get("direction", "")
+                # Block if the other position is in the same direction
+                if (existing_side == "BUY" and new_side == "BUY") or (existing_side == "SELL" and new_side == "SELL"):
+                    return f"{other_sym} already {existing_side}"
+        return ""

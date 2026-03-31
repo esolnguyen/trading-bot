@@ -59,32 +59,132 @@ class TradingStrategy:
             self.logger.info("Loaded existing position: %s %s @ $%s", self.current_position.direction, self.current_position.symbol, f"{self.current_position.entry_price:,.2f}")
 
     async def check_position(self, current_price: float) -> Optional[str]:
-        """Check if current position hit stop loss or take profit.
+        """Check if current position hit stop loss, take profit, trailing stop, or partial TP.
 
         Args:
             current_price: Current market price
 
         Returns:
-            Reason for closing position if hit, else None
+            Reason for closing/partially-closing position if triggered, else None
         """
         if not self.current_position:
             return None
 
         # Update live performance metrics (MAE/MFE)
         self.current_position.update_metrics(current_price)
-        await self.persistence.async_save_position(self.symbol, self.current_position.to_dict())
 
-        if self.current_position.is_stop_hit(current_price):
+        # --- Trailing stop update ---
+        trailing_enabled = getattr(self.settings, "trailing_stop_enabled", False)
+        if trailing_enabled:
+            self._update_trailing_stop(current_price)
+
+        # --- Hard stop loss check (includes trailing stop if activated) ---
+        active_sl = self.current_position.trailing_stop_price or self.current_position.stop_loss
+        is_long = self.current_position.direction == "LONG"
+        sl_hit = (current_price <= active_sl) if is_long else (current_price >= active_sl)
+        if sl_hit:
+            reason = "trailing_stop" if self.current_position.trailing_stop_price else "stop_loss"
             conditions = self._build_conditions_from_position(self.current_position)
-            await self.close_position("stop_loss", current_price, conditions)
-            return "stop_loss"
+            await self.persistence.async_save_position(self.symbol, self.current_position.to_dict())
+            await self.close_position(reason, current_price, conditions)
+            return reason
 
+        # --- Partial TP1 check ---
+        partial_enabled = getattr(self.settings, "partial_tp_enabled", False)
+        if (
+            partial_enabled
+            and self.current_position.tp1_price > 0
+            and not self.current_position.partial_tp1_hit
+        ):
+            tp1_hit = (current_price >= self.current_position.tp1_price) if is_long else (current_price <= self.current_position.tp1_price)
+            if tp1_hit:
+                await self._trigger_partial_tp(current_price)
+                await self.persistence.async_save_position(self.symbol, self.current_position.to_dict())
+                return "partial_tp1"
+
+        # --- Full take profit check ---
         if self.current_position.is_target_hit(current_price):
             conditions = self._build_conditions_from_position(self.current_position)
+            await self.persistence.async_save_position(self.symbol, self.current_position.to_dict())
             await self.close_position("take_profit", current_price, conditions)
             return "take_profit"
 
+        await self.persistence.async_save_position(self.symbol, self.current_position.to_dict())
         return None
+
+    def _update_trailing_stop(self, current_price: float) -> None:
+        """Ratchet the trailing stop level as price moves in our favour."""
+        pos = self.current_position
+        if pos is None:
+            return
+        activation_pct = getattr(self.settings, "trailing_stop_activation_pct", 0.01)
+        distance_pct = getattr(self.settings, "trailing_stop_distance_pct", 0.005)
+        is_long = pos.direction == "LONG"
+        pnl_pct = pos.calculate_pnl(current_price) / 100.0  # convert to decimal
+
+        # Only activate once position is sufficiently in profit
+        if pnl_pct < activation_pct:
+            return
+
+        if is_long:
+            new_trail = current_price * (1.0 - distance_pct)
+            # Only move trail upward
+            if new_trail > pos.trailing_stop_price:
+                pos.trailing_stop_price = new_trail
+                self.logger.debug("Trailing stop moved up to $%.2f for %s", new_trail, pos.symbol)
+        else:
+            new_trail = current_price * (1.0 + distance_pct)
+            # Only move trail downward (for shorts, a lower trail is better)
+            if pos.trailing_stop_price == 0.0 or new_trail < pos.trailing_stop_price:
+                pos.trailing_stop_price = new_trail
+                self.logger.debug("Trailing stop moved down to $%.2f for %s", new_trail, pos.symbol)
+
+    async def _trigger_partial_tp(self, current_price: float) -> None:
+        """Record partial TP1 hit: reduce position size and adjust trailing stop."""
+        pos = self.current_position
+        if pos is None:
+            return
+        closed_size = pos.size * pos.tp1_size_pct
+        remaining_size = pos.size - closed_size
+        closed_quote = closed_size * current_price
+        fee_pct = getattr(self.settings, "transaction_fee_percent", 0.00075)
+        fee = closed_quote * fee_pct
+        pnl_pct = pos.calculate_pnl(current_price)
+
+        self.logger.info(
+            "Partial TP1 triggered for %s @ $%.2f — closing %.1f%% (%.6f units), P&L: %+.2f%%, fee: $%.4f",
+            pos.symbol, current_price, pos.tp1_size_pct * 100, closed_size, pnl_pct, fee,
+        )
+
+        # Mark TP1 hit and update remaining position size (in-place on slots dataclass)
+        object.__setattr__(pos, "partial_tp1_hit", True)
+        object.__setattr__(pos, "size", remaining_size)
+        object.__setattr__(pos, "quote_amount", remaining_size * pos.entry_price)
+
+        # Move stop loss to break-even once TP1 is hit (protect profits)
+        if pos.direction == "LONG" and pos.entry_price > pos.stop_loss:
+            object.__setattr__(pos, "stop_loss", pos.entry_price)
+            self.logger.info("Stop loss moved to break-even $%.2f after TP1", pos.entry_price)
+        elif pos.direction == "SHORT" and pos.entry_price < pos.stop_loss:
+            object.__setattr__(pos, "stop_loss", pos.entry_price)
+            self.logger.info("Stop loss moved to break-even $%.2f after TP1", pos.entry_price)
+
+        # Save partial close record
+        decision = TradeRecord(
+            timestamp=datetime.now(timezone.utc),
+            symbol=pos.symbol,
+            action=f"PARTIAL_TP1_{pos.direction}",
+            confidence=pos.confidence,
+            price=current_price,
+            stop_loss=pos.stop_loss,
+            take_profit=pos.take_profit,
+            position_size=pos.tp1_size_pct,
+            quote_amount=closed_quote,
+            quantity=closed_size,
+            fee=fee,
+            reasoning=f"Partial TP1 hit at ${current_price:,.2f}. P&L: {pnl_pct:+.2f}%. Remaining: {remaining_size:.6f} units.",
+        )
+        await self.persistence.async_save_trade_decision(decision)
 
     async def close_position(
         self,
@@ -363,6 +463,21 @@ class TradingStrategy:
             confluence_factors=confluence_factors,
             market_conditions=market_conditions
         )
+
+        # Configure partial TP1 price if enabled
+        partial_tp_enabled = getattr(self.settings, "partial_tp_enabled", False)
+        if partial_tp_enabled:
+            atr = market_conditions.get("atr", 0.0) or risk_assessment.stop_loss  # fallback
+            tp1_multiplier = getattr(self.settings, "partial_tp1_atr_multiplier", 2.0)
+            tp1_size_pct = getattr(self.settings, "partial_tp1_size_pct", 0.5)
+            if atr > 0:
+                if direction == "LONG":
+                    tp1_price = current_price + atr * tp1_multiplier
+                else:
+                    tp1_price = current_price - atr * tp1_multiplier
+                object.__setattr__(self.current_position, "tp1_price", tp1_price)
+                object.__setattr__(self.current_position, "tp1_size_pct", tp1_size_pct)
+                self.logger.info("Partial TP1 set at $%.2f (ATR×%.1f)", tp1_price, tp1_multiplier)
 
         await self.persistence.async_save_position(self.symbol, self.current_position.to_dict())
         self.logger.info("Opened %s position @ $%s (SL: $%s, TP: $%s, Qty: %.6f, Fee: $%.4f)", direction, f"{current_price:,.2f}", f"{final_sl:,.2f}", f"{final_tp:,.2f}", quantity, entry_fee)
