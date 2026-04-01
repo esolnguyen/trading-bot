@@ -14,11 +14,11 @@ class MarketAggregator:
     def __init__(self, feed: BinanceFeed) -> None:
         self.feed = feed
 
-    async def snapshot(self, symbol: str) -> MarketSnapshot:
+    async def snapshot(self, symbol: str, timeframe: str = "1h", limit: int = 200) -> MarketSnapshot:
         ticker, order_book, candles, fr_resp, oi_resp = await asyncio.gather(
             self.feed.get_ticker(symbol),
             self.feed.get_order_book(symbol),
-            self.feed.get_ohlcv(symbol),
+            self.feed.get_ohlcv(symbol, timeframe=timeframe, limit=limit),
             self.feed.get_funding_rate(symbol),
             self.feed.get_open_interest(symbol),
         )

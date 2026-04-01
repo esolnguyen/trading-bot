@@ -1,0 +1,163 @@
+{
+  "_comment": "Trading presets — each key overrides the matching .env variable. Run: python scripts/apply_preset.py <preset_name>",
+
+  "scalping_1m": {
+    "_description": "1-minute scalping — very high frequency, suitable for X20–X50 leverage",
+    "_leverage_hint": "X20–X50",
+    "_retrain_cmd": "python scripts/train_direction.py --timeframe 1m && python scripts/train_anomaly.py --timeframe 1m",
+
+    "TIMEFRAME": "1m",
+    "ML_TIMEFRAME": "1m",
+    "HTF_TIMEFRAME": "5m",
+    "HTF_CONFIRMATION_ENABLED": "true",
+    "BOT_INTERVAL_SECONDS": "60",
+    "CANDLE_LIMIT": "200",
+    "AI_CHART_TIMEFRAME": "5m",
+    "AI_CHART_CANDLE_LIMIT": "120",
+
+    "DEFAULT_STOP_LOSS_PCT": "0.002",
+    "DEFAULT_TAKE_PROFIT_PCT": "0.003",
+    "DEFAULT_POSITION_SIZE": "0.01",
+    "MAX_DAILY_LOSS_PCT": "0.03",
+    "MAX_CONSECUTIVE_LOSSES": "2",
+    "CHOPPINESS_THRESHOLD": "80.0",
+
+    "SIGNAL_RSI_STRONG_BUY": "35.0",
+    "SIGNAL_RSI_BUY": "45.0",
+    "SIGNAL_RSI_SELL": "55.0",
+    "SIGNAL_RSI_STRONG_SELL": "65.0",
+
+    "TRAILING_STOP_ENABLED": "true",
+    "TRAILING_STOP_ACTIVATION_PCT": "0.001",
+    "TRAILING_STOP_DISTANCE_PCT": "0.001",
+    "PARTIAL_TP_ENABLED": "false"
+  },
+
+  "scalping_5m": {
+    "_description": "5-minute scalping — high frequency, suitable for X10–X20 leverage",
+    "_leverage_hint": "X10–X20",
+    "_retrain_cmd": "python scripts/train_direction.py --timeframe 5m && python scripts/train_anomaly.py --timeframe 5m",
+
+    "TIMEFRAME": "5m",
+    "ML_TIMEFRAME": "5m",
+    "HTF_TIMEFRAME": "15m",
+    "HTF_CONFIRMATION_ENABLED": "true",
+    "BOT_INTERVAL_SECONDS": "300",
+    "CANDLE_LIMIT": "200",
+    "AI_CHART_TIMEFRAME": "5m",
+    "AI_CHART_CANDLE_LIMIT": "120",
+
+    "DEFAULT_STOP_LOSS_PCT": "0.005",
+    "DEFAULT_TAKE_PROFIT_PCT": "0.008",
+    "DEFAULT_POSITION_SIZE": "0.015",
+    "MAX_DAILY_LOSS_PCT": "0.04",
+    "MAX_CONSECUTIVE_LOSSES": "3",
+    "CHOPPINESS_THRESHOLD": "75.0",
+
+    "SIGNAL_RSI_STRONG_BUY": "35.0",
+    "SIGNAL_RSI_BUY": "45.0",
+    "SIGNAL_RSI_SELL": "55.0",
+    "SIGNAL_RSI_STRONG_SELL": "65.0",
+
+    "TRAILING_STOP_ENABLED": "true",
+    "TRAILING_STOP_ACTIVATION_PCT": "0.003",
+    "TRAILING_STOP_DISTANCE_PCT": "0.002",
+    "PARTIAL_TP_ENABLED": "false"
+  },
+
+  "intraday_15m": {
+    "_description": "15-minute intraday — medium frequency, suitable for X5–X10 leverage",
+    "_leverage_hint": "X5–X10",
+    "_retrain_cmd": "python scripts/train_direction.py --timeframe 15m && python scripts/train_anomaly.py --timeframe 15m",
+
+    "TIMEFRAME": "15m",
+    "ML_TIMEFRAME": "15m",
+    "HTF_TIMEFRAME": "1h",
+    "HTF_CONFIRMATION_ENABLED": "true",
+    "BOT_INTERVAL_SECONDS": "900",
+    "CANDLE_LIMIT": "200",
+    "AI_CHART_TIMEFRAME": "15m",
+    "AI_CHART_CANDLE_LIMIT": "96",
+
+    "DEFAULT_STOP_LOSS_PCT": "0.01",
+    "DEFAULT_TAKE_PROFIT_PCT": "0.02",
+    "DEFAULT_POSITION_SIZE": "0.02",
+    "MAX_DAILY_LOSS_PCT": "0.05",
+    "MAX_CONSECUTIVE_LOSSES": "3",
+    "CHOPPINESS_THRESHOLD": "65.0",
+
+    "SIGNAL_RSI_STRONG_BUY": "32.0",
+    "SIGNAL_RSI_BUY": "43.0",
+    "SIGNAL_RSI_SELL": "57.0",
+    "SIGNAL_RSI_STRONG_SELL": "68.0",
+
+    "TRAILING_STOP_ENABLED": "true",
+    "TRAILING_STOP_ACTIVATION_PCT": "0.005",
+    "TRAILING_STOP_DISTANCE_PCT": "0.003",
+    "PARTIAL_TP_ENABLED": "true"
+  },
+
+  "swing_1h": {
+    "_description": "1-hour swing trading — low frequency, suitable for X2–X5 leverage",
+    "_leverage_hint": "X2–X5",
+    "_retrain_cmd": "python scripts/train_direction.py --timeframe 1h && python scripts/train_anomaly.py --timeframe 1h",
+
+    "TIMEFRAME": "1h",
+    "ML_TIMEFRAME": "1h",
+    "HTF_TIMEFRAME": "4h",
+    "HTF_CONFIRMATION_ENABLED": "false",
+    "BOT_INTERVAL_SECONDS": "3600",
+    "CANDLE_LIMIT": "200",
+    "AI_CHART_TIMEFRAME": "1h",
+    "AI_CHART_CANDLE_LIMIT": "168",
+
+    "DEFAULT_STOP_LOSS_PCT": "0.02",
+    "DEFAULT_TAKE_PROFIT_PCT": "0.04",
+    "DEFAULT_POSITION_SIZE": "0.02",
+    "MAX_DAILY_LOSS_PCT": "0.05",
+    "MAX_CONSECUTIVE_LOSSES": "3",
+    "CHOPPINESS_THRESHOLD": "61.8",
+
+    "SIGNAL_RSI_STRONG_BUY": "30.0",
+    "SIGNAL_RSI_BUY": "40.0",
+    "SIGNAL_RSI_SELL": "60.0",
+    "SIGNAL_RSI_STRONG_SELL": "70.0",
+
+    "TRAILING_STOP_ENABLED": "false",
+    "TRAILING_STOP_ACTIVATION_PCT": "0.01",
+    "TRAILING_STOP_DISTANCE_PCT": "0.005",
+    "PARTIAL_TP_ENABLED": "true"
+  },
+
+  "position_4h": {
+    "_description": "4-hour position trading — very low frequency, suitable for X1–X3 leverage",
+    "_leverage_hint": "X1–X3",
+    "_retrain_cmd": "python scripts/train_direction.py --timeframe 4h && python scripts/train_anomaly.py --timeframe 4h",
+
+    "TIMEFRAME": "4h",
+    "ML_TIMEFRAME": "4h",
+    "HTF_TIMEFRAME": "1d",
+    "HTF_CONFIRMATION_ENABLED": "false",
+    "BOT_INTERVAL_SECONDS": "14400",
+    "CANDLE_LIMIT": "200",
+    "AI_CHART_TIMEFRAME": "4h",
+    "AI_CHART_CANDLE_LIMIT": "180",
+
+    "DEFAULT_STOP_LOSS_PCT": "0.04",
+    "DEFAULT_TAKE_PROFIT_PCT": "0.08",
+    "DEFAULT_POSITION_SIZE": "0.03",
+    "MAX_DAILY_LOSS_PCT": "0.06",
+    "MAX_CONSECUTIVE_LOSSES": "4",
+    "CHOPPINESS_THRESHOLD": "61.8",
+
+    "SIGNAL_RSI_STRONG_BUY": "30.0",
+    "SIGNAL_RSI_BUY": "40.0",
+    "SIGNAL_RSI_SELL": "60.0",
+    "SIGNAL_RSI_STRONG_SELL": "70.0",
+
+    "TRAILING_STOP_ENABLED": "false",
+    "TRAILING_STOP_ACTIVATION_PCT": "0.02",
+    "TRAILING_STOP_DISTANCE_PCT": "0.01",
+    "PARTIAL_TP_ENABLED": "true"
+  }
+}

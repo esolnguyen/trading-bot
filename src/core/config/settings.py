@@ -143,7 +143,8 @@ class Settings:
     crypto_pair: str = "BTC/USDT"
     timeframe: str = "1h"
     candle_limit: int = 200
-    ai_chart_candle_limit: int = 200
+    ai_chart_candle_limit: int = 120
+    ai_chart_timeframe: str = "5m"
     demo_quote_capital: float = 10000.0
     transaction_fee_percent: float = 0.00075
     default_stop_loss_pct: float = 0.02
@@ -194,6 +195,14 @@ class Settings:
     # Regime detection
     # ------------------------------------------------------------------ #
     choppiness_threshold: float = 61.8       # skip entry signals when choppiness > this
+
+    # ------------------------------------------------------------------ #
+    # Signal RSI thresholds — relax for short timeframes (5m/1m)
+    # ------------------------------------------------------------------ #
+    signal_rsi_strong_buy: float = 30.0     # RSI below this → STRONG_BUY candidate
+    signal_rsi_buy: float = 40.0            # RSI below this → BUY candidate
+    signal_rsi_sell: float = 60.0           # RSI above this → SELL candidate
+    signal_rsi_strong_sell: float = 70.0    # RSI above this → STRONG_SELL candidate
 
     # ------------------------------------------------------------------ #
     # Multi-timeframe confirmation
@@ -354,7 +363,8 @@ class Settings:
             crypto_pair=os.getenv("CRYPTO_PAIR", "BTC/USDT").strip(),
             timeframe=os.getenv("TIMEFRAME", "1h").strip(),
             candle_limit=_parse_int(os.getenv("CANDLE_LIMIT"), default=200),
-            ai_chart_candle_limit=_parse_int(os.getenv("AI_CHART_CANDLE_LIMIT"), default=200),
+            ai_chart_candle_limit=_parse_int(os.getenv("AI_CHART_CANDLE_LIMIT"), default=120),
+            ai_chart_timeframe=os.getenv("AI_CHART_TIMEFRAME", "5m").strip(),
             demo_quote_capital=_parse_float(os.getenv("DEMO_QUOTE_CAPITAL"), default=10000.0),
             transaction_fee_percent=_parse_float(os.getenv("TRANSACTION_FEE_PERCENT"), default=0.00075),
             default_stop_loss_pct=_parse_float(os.getenv("DEFAULT_STOP_LOSS_PCT"), default=0.02),
@@ -387,6 +397,11 @@ class Settings:
             partial_tp1_size_pct=_parse_float(os.getenv("PARTIAL_TP1_SIZE_PCT"), default=0.5),
             # Regime detection
             choppiness_threshold=_parse_float(os.getenv("CHOPPINESS_THRESHOLD"), default=61.8),
+            # Signal RSI thresholds
+            signal_rsi_strong_buy=_parse_float(os.getenv("SIGNAL_RSI_STRONG_BUY"), default=30.0),
+            signal_rsi_buy=_parse_float(os.getenv("SIGNAL_RSI_BUY"), default=40.0),
+            signal_rsi_sell=_parse_float(os.getenv("SIGNAL_RSI_SELL"), default=60.0),
+            signal_rsi_strong_sell=_parse_float(os.getenv("SIGNAL_RSI_STRONG_SELL"), default=70.0),
             # Multi-timeframe
             htf_timeframe=os.getenv("HTF_TIMEFRAME", "4h").strip(),
             htf_confirmation_enabled=_parse_bool(os.getenv("HTF_CONFIRMATION_ENABLED"), default=False),
@@ -495,8 +510,8 @@ class Settings:
         if self.provider not in _VALID_PROVIDERS:
             raise ValueError("provider")
 
-        if self.ml_timeframe not in {"15m", "1h", "4h"}:
-            raise ValueError("ml_timeframe must be one of: 15m, 1h, 4h")
+        if self.ml_timeframe not in {"1m", "5m", "15m", "1h", "4h"}:
+            raise ValueError("ml_timeframe must be one of: 1m, 5m, 15m, 1h, 4h")
 
         if self.binance_product not in {"spot", "usdt_futures"}:
             raise ValueError("binance_product")

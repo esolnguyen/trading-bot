@@ -28,7 +28,7 @@ FEATURE_COLS = ["vol_ratio", "price_vel", "high_low_rng"]
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--timeframe",     default="15m", choices=["15m", "1h", "4h", "1d"],
+    parser.add_argument("--timeframe",     default="5m", choices=["1m", "5m", "15m", "1h", "4h", "1d"],
                         help="Candle timeframe; auto-selects --csv and --out if not overridden.")
     parser.add_argument("--csv",           default=None)
     parser.add_argument("--out",           default=None)

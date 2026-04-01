@@ -111,13 +111,13 @@ FEATURE_COLS = [
     "adx_lag1", "adx_lag2", "adx_lag3",
 ]
 
-LOOKAHEAD = 8   # candles
-THRESHOLD = 0.005  # 0.5% move to call it bullish
+LOOKAHEAD = 6   # candles — 30 min ahead on 5m, 8 min on 1m, 2h on 15m, 8h on 1h
+THRESHOLD = 0.002  # 0.2% move to call it bullish (at X50 leverage = 10% gain)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--timeframe", default="15m", choices=["15m", "1h", "4h", "1d"],
+    parser.add_argument("--timeframe", default="5m", choices=["1m", "5m", "15m", "1h", "4h", "1d"],
                         help="Candle timeframe; auto-selects --csv and --out if not overridden.")
     parser.add_argument("--csv", default=None)
     parser.add_argument("--out", default=None)
@@ -146,7 +146,11 @@ def main() -> None:
 
     X = df[FEATURE_COLS].values
     y = df["target"].values
-    print(f"  Training set: {len(X):,} samples  class balance: {y.mean():.1%} bullish\n")
+    bullish_ratio = y.mean()
+    # Weight the minority class inversely to its frequency so the model doesn't
+    # just predict "bearish" every time (critical for short timeframes like 5m/1m).
+    scale_pos_weight = (1 - bullish_ratio) / bullish_ratio if bullish_ratio > 0 else 1.0
+    print(f"  Training set: {len(X):,} samples  class balance: {bullish_ratio:.1%} bullish  scale_pos_weight={scale_pos_weight:.2f}\n")
 
     # Time-series cross-validation — NEVER shuffle financial data
     tscv = TimeSeriesSplit(n_splits=5)
@@ -155,6 +159,7 @@ def main() -> None:
         mdl = XGBClassifier(
             n_estimators=300, max_depth=4, learning_rate=0.05,
             subsample=0.8, colsample_bytree=0.8, min_child_weight=5,
+            scale_pos_weight=scale_pos_weight,
             eval_metric="logloss", verbosity=0,
         )
         mdl.fit(
@@ -175,6 +180,7 @@ def main() -> None:
     final = XGBClassifier(
         n_estimators=300, max_depth=4, learning_rate=0.05,
         subsample=0.8, colsample_bytree=0.8, min_child_weight=5,
+        scale_pos_weight=scale_pos_weight,
         eval_metric="logloss", verbosity=0,
     )
     final.fit(X, y)

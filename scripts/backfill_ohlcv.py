@@ -39,13 +39,15 @@ from src.infrastructure.binance.rest_client import BinanceRestClient
 # Default row counts per interval — enough for full Binance history from 2017.
 # Training scripts will take a recent slice; having more data never hurts.
 _DEFAULT_ROWS: dict[str, int] = {
+    "1m":  43_200,   # ~30 days (Binance REST keeps ~30 days of 1m data)
+    "5m":  17_280,   # ~60 days
     "15m": 70_000,   # ~2 years
     "1h":  17_520,   # ~2 years
     "4h":  16_500,   # ~full history since 2017
     "1d":  2_800,    # ~full history since 2017
 }
 
-_ML_TIMEFRAMES = ("15m", "1h", "4h")
+_ML_TIMEFRAMES = ("1m", "5m", "15m", "1h", "4h")
 
 
 def _read_last_timestamp(path: Path) -> int | None:

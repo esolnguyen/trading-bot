@@ -20,9 +20,21 @@ class TechnicalAnalyzer:
         self.calculator = calculator
         self.advanced_calculator = advanced_calculator
 
-    def analyze(self, symbol: str, snapshot: MarketSnapshot, choppiness_threshold: float = 61.8) -> TechnicalAnalysis:
+    def analyze(
+        self,
+        symbol: str,
+        snapshot: MarketSnapshot,
+        choppiness_threshold: float = 61.8,
+        rsi_strong_buy: float = 30.0,
+        rsi_buy: float = 40.0,
+        rsi_sell: float = 60.0,
+        rsi_strong_sell: float = 70.0,
+    ) -> TechnicalAnalysis:
         indicators = self.calculator.compute(snapshot.candles)
-        signal = self._select_signal(snapshot.price, indicators, snapshot, choppiness_threshold)
+        signal = self._select_signal(
+            snapshot.price, indicators, snapshot, choppiness_threshold,
+            rsi_strong_buy, rsi_buy, rsi_sell, rsi_strong_sell,
+        )
         band_relation = self._band_relation(snapshot.price, indicators)
         choppy_note = f"; CHOP={indicators.choppiness:.1f}({'choppy' if indicators.choppiness > choppiness_threshold else 'trending'})" if indicators.choppiness else ""
         reasoning = (
@@ -160,6 +172,10 @@ class TechnicalAnalyzer:
         indicators,
         snapshot: Optional[MarketSnapshot] = None,
         choppiness_threshold: float = 61.8,
+        rsi_strong_buy: float = 30.0,
+        rsi_buy: float = 40.0,
+        rsi_sell: float = 60.0,
+        rsi_strong_sell: float = 70.0,
     ) -> Signal:
         # Regime gate: in a choppy market, suppress directional entry signals
         if indicators.choppiness > choppiness_threshold:
@@ -167,35 +183,31 @@ class TechnicalAnalyzer:
 
         # Funding rate sentiment bias (futures only)
         funding_rate: float = snapshot.funding_rate if (snapshot and snapshot.funding_rate is not None) else 0.0
-        # Strongly negative FR means shorts are paying → bullish bias; strongly positive → bearish bias
-        fr_bearish_bias = funding_rate > 0.003   # longs paying >0.3% per 8h → crowded long
-        fr_bullish_bias = funding_rate < -0.001  # shorts paying → crowded short
-
-        # ADX-confirmed trending market strengthens signals
-        strong_trend = indicators.adx >= 25
+        fr_bearish_bias = funding_rate > 0.003
+        fr_bullish_bias = funding_rate < -0.001
 
         if (
-            indicators.rsi_14 < 30
+            indicators.rsi_14 < rsi_strong_buy
             and price < indicators.bb_lower
             and indicators.macd_hist > 0
             and not fr_bearish_bias
         ):
             return Signal.STRONG_BUY
         if (
-            indicators.rsi_14 < 40
+            indicators.rsi_14 < rsi_buy
             and price < indicators.bb_mid
             and (not fr_bearish_bias or fr_bullish_bias)
         ):
             return Signal.BUY
         if (
-            indicators.rsi_14 > 70
+            indicators.rsi_14 > rsi_strong_sell
             and price > indicators.bb_upper
             and indicators.macd_hist < 0
             and not fr_bullish_bias
         ):
             return Signal.STRONG_SELL
         if (
-            indicators.rsi_14 > 60
+            indicators.rsi_14 > rsi_sell
             and price > indicators.bb_mid
             and (not fr_bullish_bias or fr_bearish_bias)
         ):

@@ -26,6 +26,7 @@ class IndicatorCalculator:
         macd_line_series, macd_signal_series, macd_hist_series = self._macd(closes)
         bb_upper, bb_mid, bb_lower = self._bollinger_bands(closes, period=20, std_dev=2.0)
         volume_sma_20 = self._sma(volumes[-20:])
+        vol_ratio = volumes[-1] / volume_sma_20 if volume_sma_20 > 0 else 1.0
         atr = self._atr(highs, lows, closes, period=14)
         adx = self._adx(highs, lows, closes, period=14)
         obv_slope = self._obv_slope(closes, volumes, period=20)
@@ -63,6 +64,7 @@ class IndicatorCalculator:
             adx=adx,
             obv_slope=obv_slope,
             choppiness=choppiness,
+            vol_ratio=vol_ratio,
         )
 
     @staticmethod

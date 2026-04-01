@@ -195,15 +195,22 @@ class TradingLoop:
                 self.logger.exception("trading_strategy.check_position failed")
 
         choppiness_threshold = getattr(self.settings, "choppiness_threshold", 61.8)
+        rsi_strong_buy  = getattr(self.settings, "signal_rsi_strong_buy", 30.0)
+        rsi_buy         = getattr(self.settings, "signal_rsi_buy", 40.0)
+        rsi_sell        = getattr(self.settings, "signal_rsi_sell", 60.0)
+        rsi_strong_sell = getattr(self.settings, "signal_rsi_strong_sell", 70.0)
         analyses = {
-            symbol: self.tech_analyzer.analyze(symbol, snapshot, choppiness_threshold)
+            symbol: self.tech_analyzer.analyze(
+                symbol, snapshot, choppiness_threshold,
+                rsi_strong_buy, rsi_buy, rsi_sell, rsi_strong_sell,
+            )
             for symbol, snapshot in snapshots.items()
         }
 
         # Multi-timeframe: fetch 4h candles and compute HTF signals
         htf_analyses = await self._collect_htf_analyses(snapshots)
 
-        patterns = self._collect_patterns(snapshots, analyses)
+        patterns = await self._collect_patterns(snapshots, analyses)
         rag_context = self._build_rag_context(snapshots, analyses)
 
         # Gather optional extra context sections
@@ -332,15 +339,30 @@ class TradingLoop:
 
     async def _collect_snapshots(self) -> dict[str, Any]:
         symbols = getattr(self.settings, "trading_symbols", None) or ["BTCUSDT", "ETHUSDT"]
-        snapshots = await asyncio.gather(*[self.aggregator.snapshot(s) for s in symbols])
+        timeframe = getattr(self.settings, "timeframe", "1h")
+        limit = getattr(self.settings, "candle_limit", 200)
+        snapshots = await asyncio.gather(*[
+            self.aggregator.snapshot(s, timeframe=timeframe, limit=limit) for s in symbols
+        ])
         return dict(zip(symbols, snapshots))
 
-    def _collect_patterns(self, snapshots: dict[str, Any], analyses: dict[str, Any]) -> dict[str, Any]:
+    async def _collect_patterns(self, snapshots: dict[str, Any], analyses: dict[str, Any]) -> dict[str, Any]:
         results = {}
+        chart_tf = getattr(self.settings, "ai_chart_timeframe", "5m")
+        chart_limit = getattr(self.settings, "ai_chart_candle_limit", 120)
+        primary_tf = getattr(self.settings, "timeframe", "1h")
+        feed = getattr(self.aggregator, "feed", None)
+
         for symbol, snapshot in snapshots.items():
             pattern_result = self.pattern_analyzer.analyze(symbol, snapshot.candles)
             if self.settings.model_supports_vision:
-                pattern_result.chart_png_b64 = self.chart_gen.render(symbol, snapshot.candles, analyses[symbol].indicators)
+                chart_candles = snapshot.candles
+                if feed is not None and chart_tf != primary_tf:
+                    try:
+                        chart_candles = await feed.get_ohlcv(symbol, timeframe=chart_tf, limit=chart_limit)
+                    except Exception:  # noqa: BLE001
+                        self.logger.debug("chart candle fetch failed for %s/%s — using primary candles", symbol, chart_tf)
+                pattern_result.chart_png_b64 = self.chart_gen.render(symbol, chart_candles, analyses[symbol].indicators)
             results[symbol] = pattern_result
         return results
 
@@ -579,7 +601,8 @@ class TradingLoop:
             try:
                 analysis = analyses.get(first_symbol)
                 if analysis is not None:
-                    dir_text = self._direction_classifier.format_context(analysis.indicators)
+                    price = snapshots[first_symbol].price if first_symbol in snapshots else None
+                    dir_text = self._direction_classifier.format_context(analysis.indicators, price)
                     if dir_text:
                         parts.append(dir_text)
             except Exception:  # noqa: BLE001
