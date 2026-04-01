@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from src.core.config import Settings
 from src.infrastructure.ai import LLMManager
@@ -35,40 +35,60 @@ from src.services.trading import Executor, RiskManager, TradingLoop
 logger = logging.getLogger(__name__)
 
 
-def _try_build_vector_memory(store: ChromaStore) -> Optional[Any]:
+def _try_build_vector_memory(store: ChromaStore) -> Any | None:
     """Build VectorMemoryService if the module is available."""
     try:
-        from src.infrastructure.storage.vector_memory import VectorMemoryService  # noqa: PLC0415
+        from src.infrastructure.storage.vector_memory import (
+            VectorMemoryService,
+        )  # noqa: PLC0415
+
         return VectorMemoryService(store)
     except Exception:  # noqa: BLE001
         logger.debug("VectorMemoryService unavailable", exc_info=True)
         return None
 
 
-def _try_build_brain_service(persistence: Persistence, vector_memory: Optional[Any]) -> Optional[Any]:
+def _try_build_brain_service(
+    persistence: Persistence, vector_memory: Any | None
+) -> Any | None:
+    if vector_memory is None:
+        return None
     try:
-        from src.services.trading.brain_service import TradingBrainService  # noqa: PLC0415
-        return TradingBrainService(persistence=persistence, vector_memory=vector_memory, logger=logger)
+        from src.services.trading.brain_service import (
+            TradingBrainService,
+        )  # noqa: PLC0415
+
+        return TradingBrainService(
+            persistence=persistence, vector_memory=vector_memory, logger=logger
+        )
     except Exception:  # noqa: BLE001
         logger.debug("TradingBrainService unavailable", exc_info=True)
         return None
 
 
-def _try_build_memory_service(persistence: Persistence, settings: Settings) -> Optional[Any]:
+def _try_build_memory_service(
+    persistence: Persistence, settings: Settings
+) -> Any | None:
     try:
-        from src.services.trading.memory_service import TradingMemoryService  # noqa: PLC0415
-        symbol = getattr(settings, "crypto_pair", "BTCUSDT")
-        return TradingMemoryService(persistence=persistence, symbol=symbol, logger=logger)
+        from src.services.trading.memory_service import (
+            TradingMemoryService,
+        )  # noqa: PLC0415
+
+        return TradingMemoryService(persistence=persistence, logger=logger)
     except Exception:  # noqa: BLE001
         logger.debug("TradingMemoryService unavailable", exc_info=True)
         return None
 
 
-def _try_build_statistics_service(persistence: Persistence, settings: Settings) -> Optional[Any]:
+def _try_build_statistics_service(
+    persistence: Persistence, settings: Settings
+) -> Any | None:
     try:
-        from src.services.trading.statistics_service import TradingStatisticsService  # noqa: PLC0415
-        symbol = getattr(settings, "crypto_pair", "BTCUSDT")
-        return TradingStatisticsService(persistence=persistence, symbol=symbol, logger=logger)
+        from src.services.trading.statistics_service import (
+            TradingStatisticsService,
+        )  # noqa: PLC0415
+
+        return TradingStatisticsService(persistence=persistence, logger=logger)
     except Exception:  # noqa: BLE001
         logger.debug("TradingStatisticsService unavailable", exc_info=True)
         return None
@@ -77,13 +97,16 @@ def _try_build_statistics_service(persistence: Persistence, settings: Settings) 
 def _try_build_trading_strategy(
     risk: Any,
     persistence: Persistence,
-    memory_service: Optional[Any],
-    statistics_service: Optional[Any],
-    brain_service: Optional[Any],
+    memory_service: Any | None,
+    statistics_service: Any | None,
+    brain_service: Any | None,
     settings: Settings,
-) -> Optional[Any]:
+) -> Any | None:
     try:
-        from src.services.trading.trading_strategy import TradingStrategy  # noqa: PLC0415
+        from src.services.trading.trading_strategy import (
+            TradingStrategy,
+        )  # noqa: PLC0415
+
         symbol = getattr(settings, "crypto_pair", "BTCUSDT")
         return TradingStrategy(
             logger=logger,
@@ -100,28 +123,60 @@ def _try_build_trading_strategy(
         return None
 
 
-def _try_build_discord_notifier(settings: Settings) -> Optional[Any]:
+def _try_build_discord_notifier(settings: Settings) -> Any | None:
     if not getattr(settings, "discord_bot_enabled", False):
         return None
     try:
         import discord  # noqa: PLC0415
-        from src.interfaces.notifiers.discord_notifier import DiscordNotifier  # noqa: PLC0415
-        from src.interfaces.notifiers.filehandler import DiscordFileHandler  # noqa: PLC0415
+        from src.interfaces.notifiers.discord_notifier import (
+            DiscordNotifier,
+        )  # noqa: PLC0415
+        from src.interfaces.notifiers.filehandler import (
+            DiscordFileHandler,
+        )  # noqa: PLC0415
         from src.infrastructure.ai.unified_parser import UnifiedParser  # noqa: PLC0415
         from src.shared.format_utils import FormatUtils  # noqa: PLC0415
 
+        from src.interfaces.notifiers.filehandler_components.tracking_persistence import (
+            TrackingPersistence,
+        )  # noqa: PLC0415
+        from src.interfaces.notifiers.filehandler_components.message_tracker import (
+            MessageTracker,
+        )  # noqa: PLC0415
+        from src.interfaces.notifiers.filehandler_components.cleanup_scheduler import (
+            CleanupScheduler,
+        )  # noqa: PLC0415
+        from src.interfaces.notifiers.filehandler_components.message_deleter import (
+            MessageDeleter,
+        )  # noqa: PLC0415
+
         intents = discord.Intents.default()
         bot = discord.Client(intents=intents)
+        persistence = TrackingPersistence(
+            tracking_file="data/discord_tracking.json",
+            logger=logger,
+        )
+        tracker = MessageTracker(
+            persistence_handler=persistence, logger=logger, config=settings
+        )
+        scheduler = CleanupScheduler(
+            cleanup_interval=getattr(settings, "discord_cleanup_interval", 300),
+            logger=logger,
+        )
+        deleter = MessageDeleter(bot=bot, logger=logger)
         file_handler = DiscordFileHandler(
-            guild_id=getattr(settings, "guild_id_discord", 0),
-            channel_id=getattr(settings, "main_channel_id", 0),
             bot=bot,
             logger=logger,
+            config=settings,
+            persistence=persistence,
+            tracker=tracker,
+            scheduler=scheduler,
+            deleter=deleter,
         )
         return DiscordNotifier(
             logger=logger,
             config=settings,
-            unified_parser=UnifiedParser(),
+            unified_parser=UnifiedParser(logger=logger),
             formatter=FormatUtils(),
             bot=bot,
             file_handler=file_handler,
@@ -149,18 +204,18 @@ def build_runtime(settings: Settings) -> dict[str, Any]:
     logger_notifier = LoggerNotifier(logger)
 
     # ML services — all optional, degrade gracefully if model files missing
-    percentile_scorer    = HistoricalPercentileScorer(
+    percentile_scorer = HistoricalPercentileScorer(
         csv_path=settings.ohlcv_csv_path(settings.crypto_pair, settings.ml_timeframe),
         timeframe=settings.ml_timeframe,
     )
-    key_level_detector   = KeyLevelDetector()
-    cycle_classifier     = CycleClassifier(timeframe=settings.ml_timeframe)
+    key_level_detector = KeyLevelDetector()
+    cycle_classifier = CycleClassifier(timeframe=settings.ml_timeframe)
     direction_classifier = DirectionClassifier(timeframe=settings.ml_timeframe)
-    outcome_predictor    = OutcomePredictor()
-    anomaly_detector     = AnomalyDetector(timeframe=settings.ml_timeframe)
-    sentiment_scorer     = SentimentScorer()
-    multi_tf_analyzer    = MultiTimeframeAnalyzer(feed)
-    ohlcv_writer         = OHLCVWriter(
+    outcome_predictor = OutcomePredictor()
+    anomaly_detector = AnomalyDetector(timeframe=settings.ml_timeframe)
+    sentiment_scorer = SentimentScorer()
+    multi_tf_analyzer = MultiTimeframeAnalyzer(feed)
+    ohlcv_writer = OHLCVWriter(
         path=settings.ohlcv_csv_path(settings.crypto_pair, settings.ml_timeframe)
     )
 
@@ -275,7 +330,9 @@ async def _close_runtime(runtime: dict[str, Any]) -> None:
             if asyncio.iscoroutine(result):
                 await result
         except Exception:  # noqa: BLE001
-            logger.exception("Failed during runtime shutdown for %s", target.__class__.__name__)
+            logger.exception(
+                "Failed during runtime shutdown for %s", target.__class__.__name__
+            )
 
 
 async def main(
@@ -303,7 +360,9 @@ async def main(
         try:
             await _ts.reconcile(_feed)
         except Exception:  # noqa: BLE001
-            active_logger.warning("Startup position reconciliation failed", exc_info=True)
+            active_logger.warning(
+                "Startup position reconciliation failed", exc_info=True
+            )
 
     tasks = [
         asyncio.create_task(
@@ -314,16 +373,24 @@ async def main(
     ]
 
     if hasattr(trading, "run_position_monitor"):
-        tasks.append(asyncio.create_task(
-            _run_guarded("position-monitor", trading.run_position_monitor, logger_=active_logger),
-            name="position-monitor",
-        ))
+        tasks.append(
+            asyncio.create_task(
+                _run_guarded(
+                    "position-monitor",
+                    trading.run_position_monitor,
+                    logger_=active_logger,
+                ),
+                name="position-monitor",
+            )
+        )
 
     if discord_notifier is not None and hasattr(discord_notifier, "start"):
-        tasks.append(asyncio.create_task(
-            _run_guarded("discord", discord_notifier.start, logger_=active_logger),
-            name="discord-notifier",
-        ))
+        tasks.append(
+            asyncio.create_task(
+                _run_guarded("discord", discord_notifier.start, logger_=active_logger),
+                name="discord-notifier",
+            )
+        )
 
     trading_task = tasks[1]
 
@@ -346,10 +413,13 @@ def run() -> None:
     # Determine log level before loading full settings (avoid double-load)
     import os as _os
     from dotenv import load_dotenv as _load_dotenv
+
     _load_dotenv(override=False)
     _debug = _os.getenv("LOGGER_DEBUG", "").strip().lower() in {"1", "true", "yes"}
     _level = logging.DEBUG if _debug else logging.INFO
-    logging.basicConfig(level=_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    logging.basicConfig(
+        level=_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+    )
     # ChromaDB posthog telemetry errors are harmless version-mismatch noise — suppress them
     logging.getLogger("chromadb.telemetry.product.posthog").setLevel(logging.CRITICAL)
     try:
