@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 
 from src.domain.analysis import TechnicalAnalysis
 from src.domain.market import MarketSnapshot
@@ -24,30 +25,59 @@ class RAGRetriever:
     SYMBOL_KEYWORDS = {
         "BTCUSDT": ("btc", "bitcoin"),
         "ETHUSDT": ("eth", "ethereum"),
+        "SOLUSDT": ("sol", "solana"),
+        "BNBUSDT": ("bnb", "binance"),
     }
 
-    def __init__(self, store: ChromaStore) -> None:
+    def __init__(self, store: ChromaStore, settings: Any | None = None) -> None:
         self.store = store
+        self._news_results:   int = getattr(settings, "rag_retrieval_news",   3) if settings else 3
+        self._macro_results:  int = getattr(settings, "rag_retrieval_macro",  1) if settings else 1
+        self._memory_results: int = getattr(settings, "rag_retrieval_memory", 2) if settings else 2
 
-    def retrieve(self, snapshot: MarketSnapshot, analysis: TechnicalAnalysis) -> str:
+    def retrieve(
+        self,
+        snapshot: MarketSnapshot,
+        analysis: TechnicalAnalysis,
+        *,
+        include_macro: bool = True,
+    ) -> str:
+        """Retrieve formatted RAG context for one symbol.
+
+        Args:
+            include_macro: When False, the global macro section is omitted.
+                           Use ``retrieve_macro`` once and share it across symbols
+                           to avoid sending the same macro text N times.
+        """
         if all(self.store.count(name) == 0 for name in ("news", "macro", "trade_memory")):
             return "=== NO CONTEXT AVAILABLE ==="
 
         query = f"{snapshot.symbol} price {snapshot.price} signal {analysis.signal.value} {analysis.reasoning[:200]}"
 
-        news_docs = self.store.query("news", query, n_results=5)
-        macro_docs = self.store.query("macro", query, n_results=3)
-        memory_docs = self.store.query("trade_memory", query, n_results=3)
+        news_docs = self.store.query("news", query, n_results=self._news_results)
+        macro_docs = self.store.query("macro", query, n_results=self._macro_results) if include_macro else {}
+        memory_docs = self.store.query("trade_memory", query, n_results=self._memory_results)
 
         sections = [
             self._format_news_section(news_docs, snapshot.symbol),
-            self._format_macro_section(macro_docs),
+            self._format_macro_section(macro_docs) if include_macro else "",
             self._format_trade_memory_section(memory_docs, snapshot.symbol),
         ]
         content = "\n\n".join(section for section in sections if section)
         if not content.strip():
             return "=== NO CONTEXT AVAILABLE ==="
         return content[: self.MAX_OUTPUT_CHARS]
+
+    def retrieve_macro(self, query: str) -> str:
+        """Return a formatted macro section using a freeform query string.
+
+        Call this once per cycle when ``single_symbol_decision`` is True, then
+        append the result to the combined RAG block instead of repeating it per symbol.
+        """
+        if self.store.count("macro") == 0:
+            return ""
+        macro_docs = self.store.query("macro", query, n_results=self._macro_results)
+        return self._format_macro_section(macro_docs)
 
     @classmethod
     def _sanitize(cls, text: str, max_chars: int) -> str:
@@ -70,7 +100,21 @@ class RAGRetriever:
             source = self._sanitize(metadata.get("source", "unknown"), 60)
             published_at = self._sanitize(metadata.get("published_at", ""), 30)
             body = self._sanitize(metadata.get("body", document or ""), self.MAX_BODY_CHARS)
-            lines.append(f"[{index}] {title} — {source} ({published_at})")
+            # Fix #7: surface FinBERT sentiment score when present
+            sentiment_score = metadata.get("sentiment_score")
+            sentiment_tag = ""
+            if sentiment_score is not None:
+                try:
+                    score_f = float(sentiment_score)
+                    if score_f >= 0.3:
+                        sentiment_tag = " 📈[bullish]"
+                    elif score_f <= -0.3:
+                        sentiment_tag = " 📉[bearish]"
+                    else:
+                        sentiment_tag = " ➡[neutral]"
+                except (TypeError, ValueError):
+                    pass
+            lines.append(f"[{index}] {title} — {source} ({published_at}){sentiment_tag}")
             lines.append(body)
         return "\n".join(lines)
 

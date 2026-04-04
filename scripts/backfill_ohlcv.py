@@ -173,7 +173,11 @@ def main() -> None:
         base_url=settings.binance_base_url,
     )
 
-    sym = (args.symbol or settings.crypto_pair).replace("/", "").upper()
+    if args.symbol:
+        symbols = [args.symbol.replace("/", "").upper()]
+    else:
+        symbols = [s.upper() for s in settings.trading_symbols] if settings.trading_symbols else \
+                  [settings.crypto_pair.replace("/", "").upper()]
 
     if args.all:
         intervals = list(_ML_TIMEFRAMES) + ["1d"]
@@ -181,10 +185,11 @@ def main() -> None:
         interval = args.interval or settings.ml_timeframe
         intervals = [interval, "1d"] if interval != "1d" else ["1d"]
 
-    for interval in intervals:
-        rows = args.rows if (args.rows and len(intervals) == 1) else _DEFAULT_ROWS.get(interval, 1_500)
-        out = settings.ohlcv_csv_path(sym, interval)
-        backfill(client, sym, interval, rows, out)
+    for sym in symbols:
+        for interval in intervals:
+            rows = args.rows if (args.rows and len(intervals) == 1 and len(symbols) == 1) else _DEFAULT_ROWS.get(interval, 1_500)
+            out = settings.ohlcv_csv_path(sym, interval)
+            backfill(client, sym, interval, rows, out)
 
 
 if __name__ == "__main__":

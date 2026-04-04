@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from typing import Any, Callable
 
 from src.core.config import Settings
@@ -23,12 +24,18 @@ class Executor:
         api_client_factory: Callable[[], Any] | None = None,
     ) -> None:
         self.settings = settings
-        self._api_client_factory = api_client_factory or self._default_api_client_factory
+        self._api_client_factory = (
+            api_client_factory or self._default_api_client_factory
+        )
         self._api_client: Any | None = None
         self._lock = asyncio.Lock()
+        self._step_size_cache: dict[str, str] = (
+            {}
+        )  # symbol -> stepSize string e.g. "0.00001"
 
     async def __aenter__(self) -> "Executor":
-        await self._ensure_api_client()
+        client = await self._ensure_api_client()
+        await self._apply_leverage(client)
         return self
 
     async def __aexit__(self, *_: object) -> None:
@@ -54,11 +61,14 @@ class Executor:
             )
 
         client = await self._ensure_api_client()
+        qty_str = await self._format_quantity(
+            decision.symbol, decision.quantity, client
+        )
         params = {
             "symbol": decision.symbol,
             "side": decision.action.value,
             "type": decision.order_type,
-            "quantity": decision.quantity,
+            "quantity": qty_str,
         }
         if decision.price is not None:
             params["price"] = decision.price
@@ -128,9 +138,16 @@ class Executor:
                     closePosition="true",
                 )
                 sl_order_id = str(sl_data.get("orderId", "")) or None
-                logger.info("Futures SL bracket placed: %s stopPrice=%.2f order=%s", symbol, sl_price, sl_order_id)
+                logger.info(
+                    "Futures SL bracket placed: %s stopPrice=%.2f order=%s",
+                    symbol,
+                    sl_price,
+                    sl_order_id,
+                )
             except Exception as exc:  # noqa: BLE001
-                logger.error("Failed to place futures SL bracket for %s: %s", symbol, exc)
+                logger.error(
+                    "Failed to place futures SL bracket for %s: %s", symbol, exc
+                )
 
             try:
                 tp_data = client.create_order(
@@ -141,9 +158,16 @@ class Executor:
                     closePosition="true",
                 )
                 tp_order_id = str(tp_data.get("orderId", "")) or None
-                logger.info("Futures TP bracket placed: %s stopPrice=%.2f order=%s", symbol, tp_price, tp_order_id)
+                logger.info(
+                    "Futures TP bracket placed: %s stopPrice=%.2f order=%s",
+                    symbol,
+                    tp_price,
+                    tp_order_id,
+                )
             except Exception as exc:  # noqa: BLE001
-                logger.error("Failed to place futures TP bracket for %s: %s", symbol, exc)
+                logger.error(
+                    "Failed to place futures TP bracket for %s: %s", symbol, exc
+                )
 
         else:
             # --- Spot: limit orders at a small offset from the trigger price ---
@@ -180,7 +204,11 @@ class Executor:
                 sl_order_id = str(sl_data.get("orderId", "")) or None
                 logger.info(
                     "Spot SL bracket placed: %s stopPrice=%.2f limitPrice=%.2f qty=%s order=%s",
-                    symbol, sl_price, sl_limit_price, qty_str, sl_order_id,
+                    symbol,
+                    sl_price,
+                    sl_limit_price,
+                    qty_str,
+                    sl_order_id,
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.error("Failed to place spot SL bracket for %s: %s", symbol, exc)
@@ -198,7 +226,11 @@ class Executor:
                 tp_order_id = str(tp_data.get("orderId", "")) or None
                 logger.info(
                     "Spot TP bracket placed: %s stopPrice=%.2f limitPrice=%.2f qty=%s order=%s",
-                    symbol, tp_price, tp_limit_price, qty_str, tp_order_id,
+                    symbol,
+                    tp_price,
+                    tp_limit_price,
+                    qty_str,
+                    tp_order_id,
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.error("Failed to place spot TP bracket for %s: %s", symbol, exc)
@@ -226,7 +258,9 @@ class Executor:
                 client.cancel_order(symbol, int(oid))
                 logger.info("Cancelled %s bracket order %s for %s", label, oid, symbol)
             except Exception as exc:  # noqa: BLE001
-                logger.warning("Could not cancel %s bracket %s for %s: %s", label, oid, symbol, exc)
+                logger.warning(
+                    "Could not cancel %s bracket %s for %s: %s", label, oid, symbol, exc
+                )
 
     async def get_live_position_size(self, symbol: str) -> float:
         """Return the absolute open position quantity on the exchange.
@@ -242,14 +276,18 @@ class Executor:
             logger.warning("get_live_position_size failed for %s: %s", symbol, exc)
             return float("inf")
 
-    async def _await_limit_fill(self, outcome: TradeOutcome, client: Any) -> TradeOutcome:
+    async def _await_limit_fill(
+        self, outcome: TradeOutcome, client: Any
+    ) -> TradeOutcome:
         """Poll until a LIMIT order is filled or the timeout elapses, then cancel."""
         timeout = getattr(self.settings, "limit_order_timeout_seconds", 300)
         poll_interval = 30
         elapsed = 0
         symbol = outcome.decision.symbol
         if not outcome.order_id:
-            logger.warning("_await_limit_fill called with empty order_id — returning outcome unchanged")
+            logger.warning(
+                "_await_limit_fill called with empty order_id — returning outcome unchanged"
+            )
             return outcome
         order_id_int = int(outcome.order_id)
 
@@ -261,7 +299,9 @@ class Executor:
                 status = status_data.get("status", "")
                 if status == "FILLED":
                     filled_price = self._extract_price(status_data)
-                    logger.info("LIMIT order %s filled @ %s", order_id_int, filled_price)
+                    logger.info(
+                        "LIMIT order %s filled @ %s", order_id_int, filled_price
+                    )
                     return TradeOutcome(
                         decision=outcome.decision,
                         order_id=outcome.order_id,
@@ -271,7 +311,9 @@ class Executor:
                         timestamp=outcome.timestamp,
                     )
                 if status in ("CANCELED", "EXPIRED", "REJECTED"):
-                    logger.warning("LIMIT order %s ended with status %s", order_id_int, status)
+                    logger.warning(
+                        "LIMIT order %s ended with status %s", order_id_int, status
+                    )
                     return TradeOutcome(
                         decision=outcome.decision.__class__(
                             symbol=outcome.decision.symbol,
@@ -286,11 +328,15 @@ class Executor:
                 logger.warning("Error polling LIMIT order %s: %s", order_id_int, exc)
 
         # Timeout — cancel the order
-        logger.warning("LIMIT order %s timed out after %ss — cancelling", order_id_int, timeout)
+        logger.warning(
+            "LIMIT order %s timed out after %ss — cancelling", order_id_int, timeout
+        )
         try:
             client.cancel_order(symbol, order_id_int)
         except Exception as exc:  # noqa: BLE001
-            logger.error("Failed to cancel timed-out LIMIT order %s: %s", order_id_int, exc)
+            logger.error(
+                "Failed to cancel timed-out LIMIT order %s: %s", order_id_int, exc
+            )
         return TradeOutcome(
             decision=outcome.decision.__class__(
                 symbol=outcome.decision.symbol,
@@ -331,6 +377,55 @@ class Executor:
                 except (ValueError, TypeError):
                     pass
         return None
+
+    async def _format_quantity(self, symbol: str, quantity: float, client: Any) -> str:
+        """Round quantity down to the exchange's LOT_SIZE stepSize and return as string."""
+        step_size = await self._get_step_size(symbol, client)
+        if step_size and "." in step_size:
+            decimals = len(step_size.rstrip("0").split(".")[1])
+        else:
+            decimals = 8
+        step = float(step_size) if step_size else 0.0
+        if step > 0:
+            quantity = math.floor(quantity / step) * step
+        return f"{quantity:.{decimals}f}"
+
+    async def _get_step_size(self, symbol: str, client: Any) -> str:
+        """Fetch and cache the LOT_SIZE stepSize for a symbol."""
+        if symbol in self._step_size_cache:
+            return self._step_size_cache[symbol]
+        try:
+            info = await asyncio.to_thread(client.get_exchange_info, symbol)
+            symbols = info.get("symbols") or []
+            filters = symbols[0].get("filters", []) if symbols else []
+            for f in filters:
+                if f.get("filterType") == "LOT_SIZE":
+                    step = f.get("stepSize", "")
+                    self._step_size_cache[symbol] = step
+                    logger.debug("Cached stepSize=%s for %s", step, symbol)
+                    return step
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Could not fetch stepSize for %s: %s — using 8 decimal places",
+                symbol,
+                exc,
+            )
+        return ""
+
+    async def _apply_leverage(self, client: Any) -> None:
+        """Set configured leverage on all trading symbols (futures only)."""
+        if getattr(self.settings, "binance_product", "spot") != "usdt_futures":
+            return
+        leverage = getattr(self.settings, "futures_leverage", 1)
+        if leverage == 1:
+            return
+        symbols = getattr(self.settings, "trading_symbols", [])
+        for symbol in symbols:
+            try:
+                await asyncio.to_thread(client.change_leverage, symbol, leverage)
+                logger.info("Leverage set to %dx for %s", leverage, symbol)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Failed to set leverage for %s: %s", symbol, exc)
 
     def _default_api_client_factory(self) -> Any:
         return BinanceRestClient(

@@ -41,16 +41,28 @@ REGIME_INSTRUCTIONS: dict[str, str] = {
 class CycleClassifier:
     """Predict macro market regime from daily OHLCV features."""
 
-    def __init__(self, timeframe: str = "4h") -> None:
-        self._bundle: dict[str, Any] | None = load(f"regime_classifier_{timeframe}")
+    def __init__(self, timeframe: str = "4h", symbols: list[str] | None = None) -> None:
+        self._fallback: dict[str, Any] | None = load(f"regime_classifier_{timeframe}")
+        self._bundles: dict[str, Any] = {}
+        for sym in (symbols or []):
+            bundle = load(f"regime_classifier_{sym.lower()}_{timeframe}")
+            if bundle is not None:
+                self._bundles[sym.upper()] = bundle
+        self._bundle = self._fallback
 
-    def predict(self, daily_features: dict[str, float]) -> tuple[str, float] | None:
+    def get_bundle(self, symbol: str | None = None) -> dict[str, Any] | None:
+        if symbol:
+            return self._bundles.get(symbol.upper(), self._fallback)
+        return self._fallback
+
+    def predict(self, daily_features: dict[str, float], symbol: str | None = None) -> tuple[str, float] | None:
         """Return (regime_label, confidence) or None if model unavailable."""
-        if self._bundle is None:
+        bundle = self.get_bundle(symbol)
+        if bundle is None:
             return None
         try:
-            model = self._bundle["model"]
-            feature_cols: list[str] = self._bundle["feature_cols"]
+            model = bundle["model"]
+            feature_cols: list[str] = bundle["feature_cols"]
             X = [[daily_features.get(c, 0.0) for c in feature_cols]]
             label = model.predict(X)[0]
             proba = float(max(model.predict_proba(X)[0]))

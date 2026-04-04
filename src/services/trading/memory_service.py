@@ -21,7 +21,13 @@ class TradingMemoryService:
     - Provide formatted memory context for AI
     """
 
-    def __init__(self, logger: logging.Logger, persistence: "Persistence", max_memory: int = 10, vector_memory: Optional[Any] = None):
+    def __init__(
+        self,
+        logger: logging.Logger,
+        persistence: "Persistence",
+        max_memory: int = 10,
+        vector_memory: Optional[Any] = None,
+    ):
         """Initialize trading memory service.
 
         Args:
@@ -78,7 +84,7 @@ class TradingMemoryService:
         if not history:
             return memory
 
-        recent_history = history[-self.max_memory:]
+        recent_history = history[-self.max_memory :]
 
         for trade_data in recent_history:
             try:
@@ -87,5 +93,7 @@ class TradingMemoryService:
             except Exception as e:
                 self.logger.warning("Could not load decision from history: %s", e)
 
-        self.logger.info("Built memory with %s decisions from history", len(memory.decisions))
+        self.logger.info(
+            "Built memory with %s decisions from history", len(memory.decisions)
+        )
         return memory

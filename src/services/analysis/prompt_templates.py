@@ -3,16 +3,22 @@
 from __future__ import annotations
 
 
-def build_system_prompt(max_order_usdt: float, regime_suffix: str = "") -> str:
+def build_system_prompt(
+    max_order_usdt: float,
+    regime_suffix: str = "",
+    trading_symbols: list[str] | None = None,
+) -> str:
     """Return the system prompt contract for the trading LLM.
 
     Args:
         max_order_usdt: Maximum order size in USDT.
         regime_suffix: Optional macro regime instruction injected by CycleClassifier.
+        trading_symbols: Allowed symbols list; defaults to BTCUSDT, ETHUSDT.
     """
+    symbols_str = ", ".join(trading_symbols) if trading_symbols else "BTCUSDT, ETHUSDT"
     base = (
         "You are an autonomous crypto trading agent.\n"
-        "Allowed symbols: BTCUSDT, ETHUSDT only.\n"
+        f"Allowed symbols: {symbols_str} only.\n"
         f"Max order size: {max_order_usdt} USDT.\n"
         "Allowed order types: MARKET, LIMIT only.\n"
         "Output format: JSON only, no prose outside JSON.\n"

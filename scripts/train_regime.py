@@ -99,14 +99,17 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--timeframe", default="1d", choices=["1d", "4h", "1h", "15m"],
                         help="Candle timeframe; auto-selects --csv and --out if not overridden.")
+    parser.add_argument("--symbol", default=None, help="Symbol e.g. btcusdt — prefixes output filename")
     parser.add_argument("--csv", default=None)
     parser.add_argument("--out", default=None)
     args = parser.parse_args()
 
+    sym = args.symbol.lower() if args.symbol else "btcusdt"
+    sym_prefix = f"{sym}_" if args.symbol else ""
     if args.csv is None:
-        args.csv = f"data/ohlcv/btcusdt_{args.timeframe}.csv"
+        args.csv = f"data/ohlcv/{sym}_{args.timeframe}.csv"
     if args.out is None:
-        args.out = f"models/regime_classifier_{args.timeframe}.joblib"
+        args.out = f"models/regime_classifier_{sym_prefix}{args.timeframe}.joblib"
 
     print(f"Loading {args.csv} …")
     df = pd.read_csv(args.csv)

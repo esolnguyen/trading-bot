@@ -94,9 +94,9 @@ def test_max_order_must_be_in_range(monkeypatch: pytest.MonkeyPatch) -> None:
         Settings.from_env(env_file=MISSING_ENV_FILE)
 
 
-def test_bot_interval_must_be_at_least_sixty(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_bot_interval_must_not_be_negative(monkeypatch: pytest.MonkeyPatch) -> None:
     _apply_required_env(monkeypatch)
-    monkeypatch.setenv("BOT_INTERVAL_SECONDS", "30")
+    monkeypatch.setenv("BOT_INTERVAL_SECONDS", "-1")
 
     with pytest.raises(ValueError, match="bot_interval_seconds"):
         Settings.from_env(env_file=MISSING_ENV_FILE)

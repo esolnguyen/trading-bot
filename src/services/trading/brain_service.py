@@ -57,7 +57,7 @@ class TradingBrainService:
         close_price: float,
         close_reason: str,
         entry_decision: Optional[TradeRecord] = None,
-        market_conditions: Optional[Dict[str, Any]] = None
+        market_conditions: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Extract insights from a closed trade and update brain.
 
@@ -84,7 +84,7 @@ class TradingBrainService:
             bb_position=conditions.get("bb_position", "MIDDLE"),
             is_weekend=conditions.get("is_weekend", False),
             market_sentiment=conditions.get("market_sentiment", "NEUTRAL"),
-            order_book_bias=conditions.get("order_book_bias", "BALANCED")
+            order_book_bias=conditions.get("order_book_bias", "BALANCED"),
         )
 
         # Invalidate stats cache (new trade added)
@@ -115,13 +115,20 @@ class TradingBrainService:
                 "market_regime": conditions.get("trend_direction", "NEUTRAL"),
                 "is_weekend": conditions.get("is_weekend", False),
                 "position_size_pct": position.size_pct,
-                "confluence_count": self._count_strong_confluences(position.confluence_factors),
+                "confluence_count": self._count_strong_confluences(
+                    position.confluence_factors
+                ),
                 "timeframe_alignment": conditions.get("timeframe_alignment"),
                 **self._extract_factor_scores(position.confluence_factors),
-            }
+            },
         )
 
-        self.logger.info("Updated brain from %s trade (%s, P&L: %s%%)", position.direction, close_reason, f"{pnl_pct:+.2f}")
+        self.logger.info(
+            "Updated brain from %s trade (%s, P&L: %s%%)",
+            position.direction,
+            close_reason,
+            f"{pnl_pct:+.2f}",
+        )
 
         self._trade_count += 1
         if self._trade_count % self._reflection_interval == 0:
@@ -139,7 +146,7 @@ class TradingBrainService:
         bb_position: str = "MIDDLE",
         is_weekend: bool = False,
         market_sentiment: str = "NEUTRAL",
-        order_book_bias: str = "BALANCED"
+        order_book_bias: str = "BALANCED",
     ) -> str:
         """Generate formatted brain context for prompt injection using vector retrieval.
 
@@ -162,17 +169,19 @@ class TradingBrainService:
 
         exp_count = self.vector_memory.trade_count  # Excludes UPDATE entries
         if exp_count > 0:
-            lines.extend([
-                "",
-                f"## Trading Brain ({exp_count} closed trades)",
-                "",
-                "### Confidence Calibration:",
-            ])
+            lines.extend(
+                [
+                    "",
+                    f"## Trading Brain ({exp_count} closed trades)",
+                    "",
+                    "### Confidence Calibration:",
+                ]
+            )
 
             conf_stats = self._get_cached_stats(
                 "confidence", self.vector_memory.compute_confidence_stats
             )
-            for level in ['HIGH', 'MEDIUM', 'LOW']:
+            for level in ["HIGH", "MEDIUM", "LOW"]:
                 stats = conf_stats.get(level, {})
                 if stats.get("total_trades", 0) > 0:
                     lines.append(
@@ -187,13 +196,17 @@ class TradingBrainService:
             # Direction bias warning
             direction_bias = self.vector_memory.get_direction_bias()
             if direction_bias:
-                lines.extend([
-                    "",
-                    "### Direction Bias Check:",
-                    f"- Historical trades: {direction_bias['long_count']} LONG, {direction_bias['short_count']} SHORT",
-                ])
-                if direction_bias['short_count'] == 0:
-                    lines.append("- ⚠️ NO SHORT TRADES IN HISTORY: Consider SHORT opportunities more carefully; lack of data means you may be missing valid setups.")
+                lines.extend(
+                    [
+                        "",
+                        "### Direction Bias Check:",
+                        f"- Historical trades: {direction_bias['long_count']} LONG, {direction_bias['short_count']} SHORT",
+                    ]
+                )
+                if direction_bias["short_count"] == 0:
+                    lines.append(
+                        "- ⚠️ NO SHORT TRADES IN HISTORY: Consider SHORT opportunities more carefully; lack of data means you may be missing valid setups."
+                    )
 
         # Section 2: Vector-Retrieved Past Experiences (context-aware)
         vector_context = self.get_vector_context(
@@ -207,43 +220,52 @@ class TradingBrainService:
             is_weekend=is_weekend,
             market_sentiment=market_sentiment,
             order_book_bias=order_book_bias,
-            k=5
+            k=5,
         )
 
         if vector_context:
             lines.extend(["", vector_context])
 
         # Check for limited data warning in the proper way
-        has_limited_data = "⚠️ LIMITED DATA" in vector_context if vector_context else False
+        has_limited_data = (
+            "⚠️ LIMITED DATA" in vector_context if vector_context else False
+        )
 
         if lines and not has_limited_data:
-            lines.extend([
-                "",
-                "### Apply Insights (CoT Step 6 - Historical Evidence):",
-                "- MANDATORY: If win rate in similar conditions <50%, reduce your confidence by 10 points and state this adjustment.",
-                "- MANDATORY: If AVOID PATTERNS match current conditions (>50% similarity), state \"⚠️ ANTI-PATTERN MATCH\" and justify any override.",
-                "- Weight recent wins higher. Check for pattern repetition that led to losses.",
-                "",
-            ])
+            lines.extend(
+                [
+                    "",
+                    "### Apply Insights (CoT Step 6 - Historical Evidence):",
+                    "- MANDATORY: If win rate in similar conditions <50%, reduce your confidence by 10 points and state this adjustment.",
+                    '- MANDATORY: If AVOID PATTERNS match current conditions (>50% similarity), state "⚠️ ANTI-PATTERN MATCH" and justify any override.',
+                    "- Weight recent wins higher. Check for pattern repetition that led to losses.",
+                    "",
+                ]
+            )
         elif lines and has_limited_data:
-             lines.extend([
-                "",
-                "NOTE: Limited historical data available. Rely on standard technical analysis for this decision.",
-                "",
-            ])
+            lines.extend(
+                [
+                    "",
+                    "NOTE: Limited historical data available. Rely on standard technical analysis for this decision.",
+                    "",
+                ]
+            )
 
         # Build context for semantic rule matching
         adx_label = "High ADX" if adx >= 25 else "Low ADX" if adx < 20 else "Medium ADX"
-        rule_context = f"{trend_direction} + {adx_label} + {volatility_level} Volatility"
+        rule_context = (
+            f"{trend_direction} + {adx_label} + {volatility_level} Volatility"
+        )
 
         semantic_rules = self.vector_memory.get_relevant_rules(
-            current_context=rule_context,
-            n_results=3
+            current_context=rule_context, n_results=3
         )
         if semantic_rules:
-            lines.extend([
-                "### Learned Trading Rules (relevant to current conditions):",
-            ])
+            lines.extend(
+                [
+                    "### Learned Trading Rules (relevant to current conditions):",
+                ]
+            )
             for rule in semantic_rules:
                 similarity = rule.get("similarity", 0)
                 lines.append(f"- [{similarity:.0f}% match] {rule['text']}")
@@ -255,7 +277,7 @@ class TradingBrainService:
         self,
         volatility_level: str = "MEDIUM",
         confidence: str = "MEDIUM",
-        current_atr_pct: float = 2.0
+        current_atr_pct: float = 2.0,
     ) -> Dict[str, float]:
         """Get SL/TP/size suggestions from trading brain.
 
@@ -273,23 +295,29 @@ class TradingBrainService:
         volatility_multipliers = {
             "HIGH": {"sl": 2.5, "tp": 4.5},
             "MEDIUM": {"sl": 2.0, "tp": 4.0},
-            "LOW": {"sl": 1.5, "tp": 3.0}
+            "LOW": {"sl": 1.5, "tp": 3.0},
         }
 
-        multipliers = volatility_multipliers.get(volatility_level.upper(), volatility_multipliers["MEDIUM"])
+        multipliers = volatility_multipliers.get(
+            volatility_level.upper(), volatility_multipliers["MEDIUM"]
+        )
 
         recommendations = {
             "sl_pct": current_atr_pct * multipliers["sl"] / 100,
             "tp_pct": current_atr_pct * multipliers["tp"] / 100,
             "size_pct": 0.02,
             "min_rr": 2.0,
-            "source": f"atr_fallback_vol_{volatility_level.lower()}"
+            "source": f"atr_fallback_vol_{volatility_level.lower()}",
         }
 
         # Adjust position size based on confidence AND volatility
         # High volatility = reduce size even further for risk management
         base_size = {"HIGH": 0.03, "MEDIUM": 0.02, "LOW": 0.01}
-        volatility_size_adj = {"HIGH": 0.8, "MEDIUM": 1.0, "LOW": 1.0}  # Reduce size in high vol
+        volatility_size_adj = {
+            "HIGH": 0.8,
+            "MEDIUM": 1.0,
+            "LOW": 1.0,
+        }  # Reduce size in high vol
 
         base = base_size.get(confidence.upper(), 0.02)
         vol_adj = volatility_size_adj.get(volatility_level.upper(), 1.0)
@@ -318,7 +346,9 @@ class TradingBrainService:
             "min_confluences_weak": thresholds.get("min_confluences_weak", 4),
             "min_confluences_standard": thresholds.get("min_confluences_standard", 3),
             "position_reduce_mixed": thresholds.get("position_reduce_mixed", 0.20),
-            "position_reduce_divergent": thresholds.get("position_reduce_divergent", 0.35),
+            "position_reduce_divergent": thresholds.get(
+                "position_reduce_divergent", 0.35
+            ),
             "min_position_size": thresholds.get("min_position_size", 0.10),
             "rr_borderline_min": thresholds.get("rr_borderline_min", 1.5),
             "rr_strong_setup": thresholds.get("rr_strong_setup", 2.5),
@@ -346,11 +376,7 @@ class TradingBrainService:
         adx_label = "High ADX" if adx >= 25 else "Low ADX" if adx < 20 else "Medium ADX"
 
         # Build comprehensive context description
-        context_parts = [
-            trend_direction,
-            adx_label,
-            f"{volatility_level} Volatility"
-        ]
+        context_parts = [trend_direction, adx_label, f"{volatility_level} Volatility"]
 
         # Add momentum indicators
         if rsi_level != "NEUTRAL":
@@ -386,7 +412,7 @@ class TradingBrainService:
         is_weekend: bool = False,
         market_sentiment: str = "NEUTRAL",
         order_book_bias: str = "BALANCED",
-        k: int = 5
+        k: int = 5,
     ) -> str:
         """Get context from similar past experiences via vector retrieval.
 
@@ -418,7 +444,7 @@ class TradingBrainService:
             bb_position=bb_position,
             is_weekend=is_weekend,
             market_sentiment=market_sentiment,
-            order_book_bias=order_book_bias
+            order_book_bias=order_book_bias,
         )
 
         vector_context = self.vector_memory.get_context_for_prompt(context_query, k)
@@ -436,8 +462,6 @@ class TradingBrainService:
             )
 
         return vector_context
-
-
 
     def _get_cached_stats(self, key: str, compute_fn) -> Dict[str, Any]:
         """Get stats from cache or compute and cache them.
@@ -487,7 +511,10 @@ class TradingBrainService:
         """
         try:
             experiences = self.vector_memory.retrieve_similar_experiences(
-                "recent trading experiences", k=20, use_decay=True, where={"outcome": "WIN"}
+                "recent trading experiences",
+                k=20,
+                use_decay=True,
+                where={"outcome": "WIN"},
             )
 
             wins = experiences  # Already filtered by DB
@@ -499,8 +526,10 @@ class TradingBrainService:
                 regime = meta.get("market_regime", "NEUTRAL")
                 adx = meta.get("adx_at_entry", 0)
                 direction = meta.get("direction", "UNKNOWN")
-                adx_label = "HIGH_ADX" if adx >= 25 else "LOW_ADX" if adx < 20 else "MED_ADX"
-                return f"{direction}_{regime}_{adx_label}"
+                adx_label = (
+                    "HIGH_ADX" if adx >= 25 else "LOW_ADX" if adx < 20 else "MED_ADX"
+                )
+                return f"{direction}|{regime}|{adx_label}"
 
             pattern_counts = self._count_patterns(wins, build_win_key)
 
@@ -510,7 +539,11 @@ class TradingBrainService:
             best_pattern = pattern_counts.most_common(1)[0]
             pattern_key, count = best_pattern
             if count < 5:
-                self.logger.debug("Pattern %s rejected: only %s occurrences (need 5+)", pattern_key, count)
+                self.logger.debug(
+                    "Pattern %s rejected: only %s occurrences (need 5+)",
+                    pattern_key,
+                    count,
+                )
                 return
 
             # Validate win rate before storing rule
@@ -518,19 +551,31 @@ class TradingBrainService:
             all_pattern_experiences = self.vector_memory.retrieve_similar_experiences(
                 "recent trading experiences", k=50, use_decay=True
             )
-            pattern_wins = sum(1 for exp in all_pattern_experiences
-                             if exp.metadata.get("outcome") == "WIN"
-                             and build_win_key(exp.metadata) == pattern_key)
-            pattern_total = sum(1 for exp in all_pattern_experiences
-                              if build_win_key(exp.metadata) == pattern_key)
+            pattern_wins = sum(
+                1
+                for exp in all_pattern_experiences
+                if exp.metadata.get("outcome") == "WIN"
+                and build_win_key(exp.metadata) == pattern_key
+            )
+            pattern_total = sum(
+                1
+                for exp in all_pattern_experiences
+                if build_win_key(exp.metadata) == pattern_key
+            )
 
             if pattern_total > 0:
                 win_rate = pattern_wins / pattern_total
                 if win_rate < 0.6:
-                    self.logger.debug("Pattern %s rejected: win rate %s < 60%% (%s/%s trades)", pattern_key, f"{win_rate:.0%}", pattern_wins, pattern_total)
+                    self.logger.debug(
+                        "Pattern %s rejected: win rate %s < 60%% (%s/%s trades)",
+                        pattern_key,
+                        f"{win_rate:.0%}",
+                        pattern_wins,
+                        pattern_total,
+                    )
                     return
 
-            parts = pattern_key.split("_")
+            parts = pattern_key.split("|")
             direction = parts[0]
             regime = parts[1]
             adx_level = parts[2].replace("_", " ").title()
@@ -548,7 +593,7 @@ class TradingBrainService:
                     "source_pattern": pattern_key,
                     "source_win_count": count,
                     "total_analyzed": len(wins),
-                }
+                },
             )
 
             self.logger.info("Reflection complete: stored rule '%s'", rule_text)
@@ -564,21 +609,28 @@ class TradingBrainService:
         """
         try:
             experiences = self.vector_memory.retrieve_similar_experiences(
-                "recent trading experiences", k=20, use_decay=True, where={"outcome": "LOSS"}
+                "recent trading experiences",
+                k=20,
+                use_decay=True,
+                where={"outcome": "LOSS"},
             )
 
             losses = experiences
             if len(losses) < 5:
-                self.logger.debug("Not enough losing trades for anti-pattern reflection (need 5+)")
+                self.logger.debug(
+                    "Not enough losing trades for anti-pattern reflection (need 5+)"
+                )
                 return
 
             def build_loss_key(meta):
                 regime = meta.get("market_regime", "NEUTRAL")
                 close_reason = meta.get("close_reason", "unknown")
                 direction = meta.get("direction", "UNKNOWN")
-                return f"{direction}_{regime}_{close_reason}"
+                return f"{direction}|{regime}|{close_reason}"
 
-            pattern_counts: Dict[str, int] = self._count_patterns(losses, build_loss_key)
+            pattern_counts: Dict[str, int] = self._count_patterns(
+                losses, build_loss_key
+            )
 
             if not pattern_counts:
                 return
@@ -586,13 +638,17 @@ class TradingBrainService:
             worst_pattern = pattern_counts.most_common(1)[0]
             pattern_key, count = worst_pattern
             if count < 3:
-                self.logger.debug("Anti-pattern %s rejected: only %s occurrences (need 3+)", pattern_key, count)
+                self.logger.debug(
+                    "Anti-pattern %s rejected: only %s occurrences (need 3+)",
+                    pattern_key,
+                    count,
+                )
                 return
 
-            parts = pattern_key.split("_")
+            parts = pattern_key.split("|")
             direction = parts[0]
             regime = parts[1]
-            close_reason = "_".join(parts[2:])
+            close_reason = parts[2]
 
             rule_text = (
                 f"⚠️ AVOID: {direction} trades in {regime} market often hit {close_reason}. "
@@ -607,10 +663,12 @@ class TradingBrainService:
                     "rule_type": "anti_pattern",
                     "source_pattern": pattern_key,
                     "source_loss_count": count,
-                }
+                },
             )
 
-            self.logger.info("Anti-pattern reflection complete: stored rule '%s'", rule_text)
+            self.logger.info(
+                "Anti-pattern reflection complete: stored rule '%s'", rule_text
+            )
 
         except Exception as e:
             self.logger.warning("Loss reflection failed: %s", e)
@@ -624,7 +682,7 @@ class TradingBrainService:
         new_tp: float,
         current_price: float,
         current_pnl_pct: float,
-        market_conditions: Optional[Dict[str, Any]] = None
+        market_conditions: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Track position update decisions for learning.
 
@@ -663,7 +721,7 @@ class TradingBrainService:
             bb_position=conditions.get("bb_position", "MIDDLE"),
             is_weekend=conditions.get("is_weekend", False),
             market_sentiment=conditions.get("market_sentiment", "NEUTRAL"),
-            order_book_bias=conditions.get("order_book_bias", "BALANCED")
+            order_book_bias=conditions.get("order_book_bias", "BALANCED"),
         )
 
         update_id = f"update_{int(datetime.now().timestamp())}"
@@ -685,7 +743,11 @@ class TradingBrainService:
                 "pnl_at_update": current_pnl_pct,
                 "adx_at_update": conditions.get("adx", 0),
                 "volatility": conditions.get("volatility", "MEDIUM"),
-            }
+            },
         )
 
-        self.logger.debug("Tracked position update: %s at %s%% PnL", action_type, f"{current_pnl_pct:+.1f}")
+        self.logger.debug(
+            "Tracked position update: %s at %s%% PnL",
+            action_type,
+            f"{current_pnl_pct:+.1f}",
+        )

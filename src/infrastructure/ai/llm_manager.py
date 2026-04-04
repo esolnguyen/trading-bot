@@ -22,7 +22,6 @@ class LLMManager:
     The external ``decide()`` interface is unchanged for TradingLoop compatibility.
     """
 
-    ALLOWED_SYMBOLS = {"BTCUSDT", "ETHUSDT"}
     MAX_LOG_TEXT_CHARS = 4000
 
     def __init__(
@@ -33,6 +32,11 @@ class LLMManager:
         sleep_func: Callable[[float], Any] = asyncio.sleep,
     ) -> None:
         self.settings = settings
+        _symbols_list: list[str] = list(
+            getattr(settings, "trading_symbols", None) or ["BTCUSDT", "ETHUSDT"]
+        )
+        self.ALLOWED_SYMBOLS: frozenset[str] = frozenset(_symbols_list)
+        self._primary_symbol: str = _symbols_list[0]
         self._sleep_func = sleep_func
         # Azure client (used when provider == "azure")
         self._client_factory = client_factory or self._default_client_factory
@@ -334,10 +338,11 @@ class LLMManager:
         except Exception:
             return self._fallback_decision("parse_error")
 
+        _primary = self._primary_symbol
         if action == Action.HOLD:
-            symbol = str(payload.get("symbol") or "BTCUSDT")
+            symbol = str(payload.get("symbol") or _primary)
             if symbol not in self.ALLOWED_SYMBOLS:
-                symbol = "BTCUSDT"
+                symbol = _primary
             return TradeDecision(
                 symbol=symbol, action=Action.HOLD, quantity=0.0,
                 order_type="MARKET", price=None,
@@ -347,9 +352,9 @@ class LLMManager:
                 source=self.settings.provider,
             )
 
-        symbol = str(payload.get("symbol", "BTCUSDT"))
+        symbol = str(payload.get("symbol", _primary))
         if symbol not in self.ALLOWED_SYMBOLS:
-            symbol = "BTCUSDT"
+            symbol = _primary
 
         order_type = str(payload.get("order_type", "MARKET"))
         price = payload.get("price")
@@ -381,10 +386,11 @@ class LLMManager:
         except Exception as exc:
             raise ParseError("Invalid action") from exc
 
+        _primary = self._primary_symbol
         if action == Action.HOLD:
-            symbol = str(payload.get("symbol") or "BTCUSDT")
+            symbol = str(payload.get("symbol") or _primary)
             if symbol not in self.ALLOWED_SYMBOLS:
-                symbol = "BTCUSDT"
+                symbol = _primary
             return TradeDecision(
                 symbol=symbol, action=Action.HOLD, quantity=0.0,
                 order_type="MARKET", price=None,

@@ -109,10 +109,29 @@ class BinanceRestClient:
     def cancel_order(self, symbol: str, order_id: int) -> dict[str, Any]:
         return self._request("DELETE", self._path("order"), params={"symbol": symbol, "orderId": order_id}, signed=True)
 
+    def get_exchange_info(self, symbol: str) -> dict[str, Any]:
+        return self._request("GET", self._path("exchangeInfo"), params={"symbol": symbol}, signed=False)
+
+    def change_leverage(self, symbol: str, leverage: int) -> dict[str, Any]:
+        """Futures only: set the leverage for a symbol."""
+        return self._request(
+            "POST", "/fapi/v1/leverage",
+            params={"symbol": symbol, "leverage": leverage},
+            signed=True,
+        )
+
     def get_open_positions(self, symbol: str) -> list[dict[str, Any]]:
         """Futures only: fetch position risk for the given symbol."""
         path = "/fapi/v2/positionRisk"
         return self._request("GET", path, params={"symbol": symbol}, signed=True)
+
+    def get_open_orders(self, symbol: str) -> list[dict[str, Any]]:
+        """Futures only: fetch all open orders for the given symbol."""
+        return self._request("GET", "/fapi/v1/openOrders", params={"symbol": symbol}, signed=True)
+
+    def cancel_all_open_orders(self, symbol: str) -> dict[str, Any]:
+        """Futures only: cancel all open orders for the given symbol."""
+        return self._request("DELETE", "/fapi/v1/allOpenOrders", params={"symbol": symbol}, signed=True)
 
     def get_funding_rate(self, symbol: str) -> dict[str, Any]:
         """Futures only: return current funding rate and next funding time."""

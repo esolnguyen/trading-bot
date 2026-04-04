@@ -36,6 +36,7 @@ class IndicatorSet:
     obv_slope: float = 0.0      # On-Balance Volume linear slope (normalised)
     choppiness: float = 50.0    # Choppiness Index (0-100; >61.8 = choppy market)
     vol_ratio: float = 1.0      # Last volume / 20-period volume SMA (1.0 = average)
+    cci_14: float = 0.0         # Commodity Channel Index (14); >100 = overbought, <-100 = oversold
 
 
 @dataclass(slots=True)

@@ -9,7 +9,20 @@ from typing import Optional, Tuple
 class TimeframeValidator:
     """Validates and manages timeframe configurations."""
 
-    SUPPORTED_TIMEFRAMES = ["1h", "2h", "4h", "6h", "8h", "12h", "1d", "1w"]
+    SUPPORTED_TIMEFRAMES = [
+        "1m",
+        "5m",
+        "15m",
+        "30m",
+        "1h",
+        "2h",
+        "4h",
+        "6h",
+        "8h",
+        "12h",
+        "1d",
+        "1w",
+    ]
 
     MINUTES_IN_HOUR = 60
     MINUTES_IN_DAY = 1440
@@ -24,6 +37,10 @@ class TimeframeValidator:
     MONDAY_ALIGNMENT_OFFSET_DAYS = 4
 
     TIMEFRAME_MINUTES: dict[str, int] = {
+        "1m": 1,
+        "5m": 5,
+        "15m": 15,
+        "30m": 30,
         "1h": MINUTES_IN_HOUR,
         "2h": 2 * MINUTES_IN_HOUR,
         "4h": 4 * MINUTES_IN_HOUR,
@@ -35,12 +52,29 @@ class TimeframeValidator:
     }
 
     CRYPTOCOMPARE_FORMAT: dict[str, str] = {
-        "1h": "hour", "2h": "hour", "4h": "hour",
-        "6h": "hour", "8h": "hour", "12h": "hour",
+        "1h": "hour",
+        "2h": "hour",
+        "4h": "hour",
+        "6h": "hour",
+        "8h": "hour",
+        "12h": "hour",
         "1d": "day",
     }
 
-    CCXT_STANDARD_TIMEFRAMES = ["1h", "2h", "4h", "6h", "8h", "12h", "1d", "1w"]
+    CCXT_STANDARD_TIMEFRAMES = [
+        "1m",
+        "5m",
+        "15m",
+        "30m",
+        "1h",
+        "2h",
+        "4h",
+        "6h",
+        "8h",
+        "12h",
+        "1d",
+        "1w",
+    ]
 
     @classmethod
     def validate(cls, timeframe: str) -> bool:
@@ -67,12 +101,16 @@ class TimeframeValidator:
 
     @classmethod
     def calculate_period_candles(cls, base_timeframe: str, target_period: str) -> int:
-        return cls.parse_period_to_minutes(target_period) // cls.to_minutes(base_timeframe)
+        return cls.parse_period_to_minutes(target_period) // cls.to_minutes(
+            base_timeframe
+        )
 
     @classmethod
     def to_cryptocompare_format(cls, timeframe: str) -> Tuple[str, int]:
         if timeframe not in cls.CRYPTOCOMPARE_FORMAT:
-            raise ValueError(f"Timeframe {timeframe} not supported by CryptoCompare API.")
+            raise ValueError(
+                f"Timeframe {timeframe} not supported by CryptoCompare API."
+            )
         endpoint = cls.CRYPTOCOMPARE_FORMAT[timeframe]
         if "h" in timeframe:
             multiplier = int(timeframe.replace("h", ""))
@@ -83,7 +121,9 @@ class TimeframeValidator:
         return endpoint, multiplier
 
     @classmethod
-    def is_ccxt_compatible(cls, timeframe: str, exchange_name: Optional[str] = None) -> bool:
+    def is_ccxt_compatible(
+        cls, timeframe: str, exchange_name: Optional[str] = None
+    ) -> bool:
         return timeframe in cls.CCXT_STANDARD_TIMEFRAMES
 
     @classmethod
@@ -115,8 +155,9 @@ class TimeframeValidator:
         return next_index * interval_ms + offset
 
     @classmethod
-    def calculate_wait_duration(cls, current_time_ms: int, timeframe: str,
-                                 buffer_seconds: int = 5) -> float:
+    def calculate_wait_duration(
+        cls, current_time_ms: int, timeframe: str, buffer_seconds: int = 5
+    ) -> float:
         next_candle_ms = cls.calculate_next_candle_time(current_time_ms, timeframe)
         delay_ms = next_candle_ms - current_time_ms + buffer_seconds * cls.MS_IN_SECOND
         return max(0.0, delay_ms / cls.MS_IN_SECOND)

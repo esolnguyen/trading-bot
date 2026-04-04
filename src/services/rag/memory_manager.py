@@ -38,6 +38,8 @@ class MemoryManager:
             "quantity": decision.quantity,
             "price": "" if decision.price is None else decision.price,
             "order_type": decision.order_type,
+            # Fix #3: tag dry-run trades so the LLM can distinguish hypothetical
+            # history from real executed trades when reading trade_memory.
             "dry_run": outcome.dry_run,
             "pnl_usdt": "" if outcome.pnl_usdt is None else outcome.pnl_usdt,
             "outcome_pnl": "" if outcome.pnl_usdt is None else outcome.pnl_usdt,

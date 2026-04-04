@@ -31,6 +31,10 @@ class ContextBuilder:
         self._cycle_classifier = cycle_classifier
         self._regime_suffix: str = ""  # updated by TradingLoop daily
 
+    def set_regime_suffix(self, suffix: str) -> None:
+        """Public setter for regime suffix, called by TradingLoop on daily refresh."""
+        self._regime_suffix = suffix
+
     def build(
         self,
         snapshots: dict[str, MarketSnapshot],
@@ -44,7 +48,11 @@ class ContextBuilder:
         dynamic_thresholds: Optional[dict[str, Any]] = None,
         ml_context: Optional[str] = None,
     ) -> tuple[str, str]:
-        system_prompt = build_system_prompt(self.settings.max_order_usdt, self._regime_suffix)
+        system_prompt = build_system_prompt(
+            self.settings.max_order_usdt,
+            self._regime_suffix,
+            trading_symbols=list(getattr(self.settings, "trading_symbols", None) or []),
+        )
         user_message = self._build_user_message(
             snapshots,
             analyses,

@@ -3,12 +3,16 @@
 Reads the persisted OHLCV CSV and computes percentile ranks for current
 indicator values against a rolling 6-month window. Requires numpy only —
 no trained model file needed.
+
+CSV data is cached in memory and only re-read when the file modification
+time changes (i.e. after OHLCVWriter appends a new row).
 """
 
 from __future__ import annotations
 
 import csv
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +41,60 @@ class HistoricalPercentileScorer:
         self._timeframe = timeframe
         self._window = _6M_CANDLES.get(timeframe, 1_080)
         self._cpd = _CANDLES_PER_DAY.get(timeframe, 6)  # candles per day
+        # In-memory cache — invalidated when the CSV mtime changes.
+        self._cache_mtime: float = 0.0
+        self._cache_closes: Any = None
+        self._cache_highs: Any = None
+        self._cache_lows: Any = None
+        self._cache_volumes: Any = None
+
+    def invalidate_cache(self) -> None:
+        """Force a cache refresh on the next call to score().
+
+        Called by OHLCVWriter after it appends a new row.
+        """
+        self._cache_mtime = 0.0
+
+    def _load_arrays(self) -> bool:
+        """Load (or serve from cache) the numpy arrays for the rolling window.
+
+        Returns True on success, False if data is unavailable or too sparse.
+        """
+        try:
+            import numpy as np  # noqa: PLC0415
+        except ImportError:
+            logger.debug("numpy not available — percentile scorer disabled")
+            return False
+
+        if not self._csv_path.exists():
+            logger.debug("OHLCV CSV not found: %s — percentile scorer disabled", self._csv_path)
+            return False
+
+        try:
+            mtime = os.path.getmtime(self._csv_path)
+        except OSError:
+            return False
+
+        if mtime == self._cache_mtime and self._cache_closes is not None:
+            return True  # cache is fresh
+
+        try:
+            rows = self._load_recent_rows(self._window)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to read OHLCV CSV: %s", exc)
+            return False
+
+        if len(rows) < 500:
+            logger.debug("Too few OHLCV rows (%d) for meaningful percentiles", len(rows))
+            return False
+
+        self._cache_closes  = np.array([r["close"]  for r in rows], dtype=float)
+        self._cache_highs   = np.array([r["high"]   for r in rows], dtype=float)
+        self._cache_lows    = np.array([r["low"]    for r in rows], dtype=float)
+        self._cache_volumes = np.array([r["volume"] for r in rows], dtype=float)
+        self._cache_mtime   = mtime
+        logger.debug("HistoricalPercentileScorer cache refreshed (%d rows)", len(rows))
+        return True
 
     def score(self, indicators: Any, current_price: float) -> str | None:
         """Return a formatted percentile summary string or None if data unavailable."""
@@ -46,24 +104,13 @@ class HistoricalPercentileScorer:
             logger.debug("numpy not available — percentile scorer disabled")
             return None
 
-        if not self._csv_path.exists():
-            logger.debug("OHLCV CSV not found: %s — percentile scorer disabled", self._csv_path)
+        if not self._load_arrays():
             return None
 
-        try:
-            rows = self._load_recent_rows(self._window)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Failed to read OHLCV CSV: %s", exc)
-            return None
-
-        if len(rows) < 500:
-            logger.debug("Too few OHLCV rows (%d) for meaningful percentiles", len(rows))
-            return None
-
-        closes  = np.array([r["close"]  for r in rows], dtype=float)
-        highs   = np.array([r["high"]   for r in rows], dtype=float)
-        lows    = np.array([r["low"]    for r in rows], dtype=float)
-        volumes = np.array([r["volume"] for r in rows], dtype=float)
+        closes  = self._cache_closes
+        highs   = self._cache_highs
+        lows    = self._cache_lows
+        volumes = self._cache_volumes
 
         lines: list[str] = ["## Historical Context (6-month percentiles)"]
 
@@ -173,17 +220,54 @@ class HistoricalPercentileScorer:
             losses = np.where(deltas < 0, -deltas, 0.0)
             avg_g  = np.convolve(gains,  np.ones(period) / period, mode="valid")
             avg_l  = np.convolve(losses, np.ones(period) / period, mode="valid")
-            rs = np.where(avg_l == 0, 100.0, avg_g / avg_l)
+            with np.errstate(divide="ignore", invalid="ignore"):
+                rs = np.where(avg_l == 0, 100.0, avg_g / avg_l)
             return 100.0 - 100.0 / (1.0 + rs)
         except Exception:  # noqa: BLE001
             return None
 
     @staticmethod
     def _rolling_adx(closes: "Any", highs: "Any", lows: "Any", period: int) -> "Any | None":
+        """Compute a rolling approximate ADX series using Directional Movement.
+
+        Uses a simple SMA smoothing (not Wilder's EMA) for efficiency, which
+        produces values on the same 0-100 scale and is suitable for percentile
+        comparison.
+        """
         try:
             import numpy as np  # noqa: PLC0415
-            hl_range = (highs - lows) / closes * 100
-            return np.convolve(hl_range, np.ones(period) / period, mode="valid")
+            n = len(closes)
+            if n < period + 2:
+                return None
+
+            # True Range
+            tr = np.maximum(
+                highs[1:] - lows[1:],
+                np.maximum(
+                    np.abs(highs[1:] - closes[:-1]),
+                    np.abs(lows[1:]  - closes[:-1]),
+                ),
+            )
+
+            # Directional movement
+            up_move   = highs[1:]  - highs[:-1]
+            down_move = lows[:-1]  - lows[1:]
+            plus_dm  = np.where((up_move > down_move) & (up_move > 0), up_move,   0.0)
+            minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
+
+            # Smooth with simple SMA
+            atr_s    = np.convolve(tr,       np.ones(period) / period, mode="valid")
+            plus_s   = np.convolve(plus_dm,  np.ones(period) / period, mode="valid")
+            minus_s  = np.convolve(minus_dm, np.ones(period) / period, mode="valid")
+
+            eps = 1e-10
+            plus_di  = 100.0 * plus_s  / (atr_s + eps)
+            minus_di = 100.0 * minus_s / (atr_s + eps)
+            dx       = 100.0 * np.abs(plus_di - minus_di) / (plus_di + minus_di + eps)
+
+            # Smooth DX → ADX
+            adx = np.convolve(dx, np.ones(period) / period, mode="valid")
+            return adx
         except Exception:  # noqa: BLE001
             return None
 

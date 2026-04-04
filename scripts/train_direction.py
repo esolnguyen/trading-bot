@@ -49,10 +49,12 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     df["macd_signal"] = sig
     df["macd_hist"]   = macd - sig
 
-    # EMA 20 / 50
+    # EMA 20 / 50 — spread and distance from price
     df["ema_20"] = c.ewm(span=20, adjust=False).mean()
     df["ema_50"] = c.ewm(span=50, adjust=False).mean()
-    df["ema_spread"] = df["ema_20"] - df["ema_50"]
+    df["ema_spread"]   = df["ema_20"] - df["ema_50"]
+    df["ema_20_dist"]  = (c - df["ema_20"]) / df["ema_20"].replace(0, np.nan) * 100
+    df["ema_50_dist"]  = (c - df["ema_50"]) / df["ema_50"].replace(0, np.nan) * 100
 
     # ATR-14
     prev_c  = c.shift(1)
@@ -94,6 +96,12 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     rng14   = (hh14 - ll14).replace(0, np.nan)
     df["choppiness"] = 100 * np.log10(atr_sum / rng14) / np.log10(14)
 
+    # CCI-14
+    tp       = (h + l + c) / 3.0
+    tp_mean  = tp.rolling(14).mean()
+    tp_mad   = tp.rolling(14).apply(lambda x: np.abs(x - x.mean()).mean(), raw=True)
+    df["cci_14"] = (tp - tp_mean) / (0.015 * tp_mad.replace(0, np.nan))
+
     # Lag features t-1, t-2, t-3
     for col in ["rsi_14", "macd_hist", "adx"]:
         for lag in [1, 2, 3]:
@@ -104,8 +112,9 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
 
 FEATURE_COLS = [
     "rsi_14", "macd_line", "macd_signal", "macd_hist",
-    "ema_spread", "atr_pct", "adx", "bb_pos", "obv_slope",
-    "vol_ratio", "choppiness",
+    "ema_spread", "ema_20_dist", "ema_50_dist",
+    "atr_pct", "adx", "bb_pos", "obv_slope",
+    "vol_ratio", "choppiness", "cci_14",
     "rsi_14_lag1", "rsi_14_lag2", "rsi_14_lag3",
     "macd_hist_lag1", "macd_hist_lag2", "macd_hist_lag3",
     "adx_lag1", "adx_lag2", "adx_lag3",
@@ -119,14 +128,17 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--timeframe", default="5m", choices=["1m", "5m", "15m", "1h", "4h", "1d"],
                         help="Candle timeframe; auto-selects --csv and --out if not overridden.")
+    parser.add_argument("--symbol", default=None, help="Symbol e.g. btcusdt — prefixes output filename")
     parser.add_argument("--csv", default=None)
     parser.add_argument("--out", default=None)
     args = parser.parse_args()
 
+    sym = args.symbol.lower() if args.symbol else "btcusdt"
+    sym_prefix = f"{sym}_" if args.symbol else ""
     if args.csv is None:
-        args.csv = f"data/ohlcv/btcusdt_{args.timeframe}.csv"
+        args.csv = f"data/ohlcv/{sym}_{args.timeframe}.csv"
     if args.out is None:
-        args.out = f"models/xgboost_direction_{args.timeframe}.joblib"
+        args.out = f"models/xgboost_direction_{sym_prefix}{args.timeframe}.joblib"
 
     print(f"Loading {args.csv} …")
     df = pd.read_csv(args.csv)

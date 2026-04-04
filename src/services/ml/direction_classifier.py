@@ -19,24 +19,43 @@ logger = logging.getLogger(__name__)
 class DirectionClassifier:
     """Predict bullish probability from a current indicator snapshot."""
 
-    def __init__(self, timeframe: str = "4h") -> None:
-        self._bundle: dict[str, Any] | None = load(f"xgboost_direction_{timeframe}")
-        # Rolling history of (rsi_14, macd_hist, adx) for lag features — filled on each call
-        self._history: deque[tuple[float, float, float]] = deque(maxlen=3)
+    def __init__(self, timeframe: str = "4h", symbols: list[str] | None = None) -> None:
+        self._fallback: dict[str, Any] | None = load(f"xgboost_direction_{timeframe}")
+        self._bundles: dict[str, Any] = {}
+        for sym in (symbols or []):
+            bundle = load(f"xgboost_direction_{sym.lower()}_{timeframe}")
+            if bundle is not None:
+                self._bundles[sym.upper()] = bundle
+        self._bundle = self._fallback
+        # Per-symbol rolling history of (rsi_14, macd_hist, adx) for lag features
+        self._histories: dict[str, deque[tuple[float, float, float]]] = {}
 
-    def predict_proba(self, indicators: Any, price: float | None = None) -> float | None:
+    def _get_bundle(self, symbol: str | None) -> dict[str, Any] | None:
+        if symbol:
+            return self._bundles.get(symbol.upper(), self._fallback)
+        return self._fallback
+
+    def _get_history(self, symbol: str | None) -> deque:
+        key = (symbol or "").upper()
+        if key not in self._histories:
+            self._histories[key] = deque(maxlen=3)
+        return self._histories[key]
+
+    def predict_proba(self, indicators: Any, price: float | None = None, symbol: str | None = None) -> float | None:
         """Return P(bullish) in [0,1] or None if model unavailable."""
-        if self._bundle is None:
+        bundle = self._get_bundle(symbol)
+        history = self._get_history(symbol)
+        if bundle is None:
             return None
         try:
-            model = self._bundle["model"]
-            feature_cols: list[str] = self._bundle["feature_cols"]
-            row = self._indicators_to_row(indicators, feature_cols, price)
+            model = bundle["model"]
+            feature_cols: list[str] = bundle["feature_cols"]
+            row = self._indicators_to_row(indicators, feature_cols, price, history)
             if row is None:
                 return None
             proba = model.predict_proba([row])[0][1]
             # Update history AFTER prediction so lags reflect previous candles
-            self._history.append((
+            history.append((
                 float(getattr(indicators, "rsi_14", 50.0)),
                 float(getattr(indicators, "macd_hist", 0.0)),
                 float(getattr(indicators, "adx", 20.0)),
@@ -46,9 +65,9 @@ class DirectionClassifier:
             logger.warning("DirectionClassifier.predict_proba failed: %s", exc)
             return None
 
-    def format_context(self, indicators: Any, price: float | None = None) -> str | None:
+    def format_context(self, indicators: Any, price: float | None = None, symbol: str | None = None) -> str | None:
         """Return a formatted string for the LLM prompt or None."""
-        prob = self.predict_proba(indicators, price)
+        prob = self.predict_proba(indicators, price, symbol=symbol)
         if prob is None:
             return None
         direction = "bullish" if prob >= 0.5 else "bearish"
@@ -59,7 +78,7 @@ class DirectionClassifier:
             f"  → Use as baseline. If RAG news strongly contradicts, weight news heavily."
         )
 
-    def _indicators_to_row(self, indicators: Any, feature_cols: list[str], price: float | None) -> list[float] | None:
+    def _indicators_to_row(self, indicators: Any, feature_cols: list[str], price: float | None, history: deque | None = None) -> list[float] | None:
         """Map IndicatorSet fields to the feature vector used at training time."""
         mapping: dict[str, float] = {}
         for attr in ("rsi_14", "macd_line", "macd_signal", "macd_hist",
@@ -67,11 +86,14 @@ class DirectionClassifier:
                      "volume_sma_20", "atr", "adx", "obv_slope", "choppiness"):
             mapping[attr] = float(getattr(indicators, attr, 0.0))
 
-        # vol_ratio: now populated from IndicatorSet directly
         mapping["vol_ratio"] = float(getattr(indicators, "vol_ratio", 1.0))
+        mapping["cci_14"] = float(getattr(indicators, "cci_14", 0.0))
 
         # Derived features
         mapping["ema_spread"] = mapping["ema_20"] - mapping["ema_50"]
+        ref_price = price if price and price > 0 else mapping["bb_mid"]
+        mapping["ema_20_dist"] = (ref_price - mapping["ema_20"]) / mapping["ema_20"] * 100 if mapping["ema_20"] > 0 else 0.0
+        mapping["ema_50_dist"] = (ref_price - mapping["ema_50"]) / mapping["ema_50"] * 100 if mapping["ema_50"] > 0 else 0.0
         mapping["atr_pct"] = mapping["atr"] / price * 100 if price and price > 0 else (
             mapping["atr"] / mapping["bb_mid"] * 100 if mapping["bb_mid"] > 0 else 0.0
         )
@@ -82,7 +104,7 @@ class DirectionClassifier:
             mapping["bb_pos"] = 0.5  # neutral fallback
 
         # Lag features — use history deque; fall back to current value if history not yet full
-        hist = list(self._history)  # oldest → newest, up to 3 entries
+        hist = list(history) if history is not None else []  # oldest → newest, up to 3 entries
         cur_rsi  = mapping["rsi_14"]
         cur_macd = mapping["macd_hist"]
         cur_adx  = mapping["adx"]

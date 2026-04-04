@@ -77,11 +77,32 @@ class Settings:
     # ------------------------------------------------------------------ #
     # Bot behaviour
     # ------------------------------------------------------------------ #
-    bot_interval_seconds: int = 300
+    # How often the main trading loop wakes and runs a cycle (seconds).
+    # 0 = auto-align: sleep exactly one candle duration so the bot runs once
+    # per closed candle (prevents 2-3× redundant LLM calls on short TFs).
+    # Set BOT_INTERVAL_SECONDS=0 in .env to enable auto-alignment.
+    bot_interval_seconds: int = 0
     max_order_usdt: float = 50.0
     bot_enabled: bool = False
     bot_dry_run: bool = True
     model_supports_vision: bool = False
+
+    # Seconds per candle for each supported timeframe (used by auto-alignment).
+    _CANDLE_SECONDS: dict[str, int] = field(default_factory=lambda: {
+        "1m": 60, "5m": 300, "15m": 900, "30m": 1800,
+        "1h": 3600, "2h": 7200, "4h": 14400, "6h": 21600,
+        "8h": 28800, "12h": 43200, "1d": 86400,
+    })
+
+    def effective_bot_interval(self) -> int:
+        """Return the actual sleep interval in seconds.
+
+        If ``bot_interval_seconds`` is 0 (auto), use the candle duration for
+        the current trading timeframe so the loop fires exactly once per candle.
+        """
+        if self.bot_interval_seconds > 0:
+            return self.bot_interval_seconds
+        return self._CANDLE_SECONDS.get(self.timeframe, 300)
 
     # ------------------------------------------------------------------ #
     # RAG / ChromaDB
@@ -197,18 +218,52 @@ class Settings:
     choppiness_threshold: float = 61.8       # skip entry signals when choppiness > this
 
     # ------------------------------------------------------------------ #
-    # Signal RSI thresholds — relax for short timeframes (5m/1m)
-    # ------------------------------------------------------------------ #
+    # Signal RSI thresholds — auto-relaxed for short timeframes (≤15m) by
+    # _effective_rsi_thresholds(); override via env vars to fix at any value.
     signal_rsi_strong_buy: float = 30.0     # RSI below this → STRONG_BUY candidate
     signal_rsi_buy: float = 40.0            # RSI below this → BUY candidate
     signal_rsi_sell: float = 60.0           # RSI above this → SELL candidate
     signal_rsi_strong_sell: float = 70.0    # RSI above this → STRONG_SELL candidate
+
+    def effective_rsi_thresholds(self) -> tuple[float, float, float, float]:
+        """Return (strong_buy, buy, sell, strong_sell) adjusted for the trading timeframe.
+
+        On shorter timeframes RSI oscillates more rapidly and rarely reaches
+        extreme levels, so the thresholds are relaxed to avoid chronic NEUTRAL
+        signals.  Override any threshold via env var to suppress auto-adjustment.
+        """
+        # Minutes per candle for the current timeframe
+        _tf_minutes: dict[str, int] = {
+            "1m": 1, "5m": 5, "15m": 15, "30m": 30,
+            "1h": 60, "2h": 120, "4h": 240, "6h": 360,
+            "8h": 480, "12h": 720, "1d": 1440,
+        }
+        minutes = _tf_minutes.get(self.timeframe, 60)
+
+        sb = self.signal_rsi_strong_buy
+        b  = self.signal_rsi_buy
+        s  = self.signal_rsi_sell
+        ss = self.signal_rsi_strong_sell
+
+        if minutes <= 5:        # 1m / 5m: very relaxed
+            return (sb + 8, b + 7, s - 7, ss - 8)
+        if minutes <= 15:       # 15m: moderately relaxed
+            return (sb + 5, b + 5, s - 5, ss - 5)
+        if minutes <= 30:       # 30m: slightly relaxed
+            return (sb + 3, b + 3, s - 3, ss - 3)
+        return (sb, b, s, ss)   # 1h+: use configured values as-is
 
     # ------------------------------------------------------------------ #
     # Multi-timeframe confirmation
     # ------------------------------------------------------------------ #
     htf_timeframe: str = "4h"
     htf_confirmation_enabled: bool = False   # require HTF trend agreement before entry
+
+    # When True, all trading symbols are evaluated in a single LLM call instead
+    # of one call per symbol. The LLM picks the best opportunity across symbols.
+    # Default True: halves LLM cost for 2-symbol trading and provides cross-asset context.
+    # Set SINGLE_SYMBOL_DECISION=false to revert to per-symbol parallel calls.
+    single_symbol_decision: bool = True
 
     # ------------------------------------------------------------------ #
     # Execution validation
@@ -226,6 +281,27 @@ class Settings:
     # ------------------------------------------------------------------ #
     spot_sl_limit_offset_pct: float = 0.01  # STOP_LOSS_LIMIT price = stopPrice × (1 - this); gives 1% fill room
     spot_tp_limit_offset_pct: float = 0.002 # TAKE_PROFIT_LIMIT price = stopPrice × (1 - this) for sells
+
+    # ------------------------------------------------------------------ #
+    # Futures leverage
+    # ------------------------------------------------------------------ #
+    futures_leverage: int = 1   # applied to all trading_symbols on startup (futures only)
+
+    # ------------------------------------------------------------------ #
+    # Signal Scorer (deterministic engine — replaces LLM when enabled)
+    # ------------------------------------------------------------------ #
+    use_signal_scorer: bool = False          # True = scorer, False = LLM
+    scoring_entry_threshold: float = 0.30    # minimum |score| to open a position
+    scoring_exit_threshold: float = 0.20     # minimum |score| to close on reversal
+    # Component weights (should roughly sum to 1.0)
+    scoring_w_signal: float = 0.25           # technical analyzer signal
+    scoring_w_direction: float = 0.25        # XGBoost P(bullish)
+    scoring_w_trend: float = 0.15            # ADX + EMA alignment
+    scoring_w_momentum: float = 0.15         # RSI + MACD histogram
+    scoring_w_volume: float = 0.10           # vol ratio + OBV slope
+    scoring_w_key_levels: float = 0.10       # S/R proximity
+    # Multipliers
+    scoring_choppiness_penalty: float = 0.3  # multiply score by this when choppy
 
     # ------------------------------------------------------------------ #
     # ML / OHLCV
@@ -255,6 +331,11 @@ class Settings:
     rag_density_penalty_multiplier: float = 0.5
     rag_density_boost_multiplier: float = 1.2
     rag_cooccurrence_multiplier: float = 1.5
+    # How many documents to pull from each Chroma collection at decision time.
+    # Lower numbers = fewer tokens in the prompt. Tune to your cost tolerance.
+    rag_retrieval_news: int = 3      # was hardcoded 5
+    rag_retrieval_macro: int = 1     # was hardcoded 3; macro is global, 1 doc is usually enough
+    rag_retrieval_memory: int = 2    # was hardcoded 3
 
     def __post_init__(self) -> None:
         self._validate_required_fields()
@@ -315,7 +396,7 @@ class Settings:
             binance_base_url=os.getenv("BINANCE_BASE_URL", "").strip(),
             binance_testnet=_parse_bool(os.getenv("BINANCE_TESTNET"), default=True),
             # Bot
-            bot_interval_seconds=_parse_int(os.getenv("BOT_INTERVAL_SECONDS"), default=300),
+            bot_interval_seconds=_parse_int(os.getenv("BOT_INTERVAL_SECONDS"), default=0),
             max_order_usdt=_parse_float(os.getenv("MAX_ORDER_USDT"), default=50.0),
             bot_enabled=_parse_bool(os.getenv("BOT_ENABLED"), default=False),
             bot_dry_run=_parse_bool(os.getenv("BOT_DRY_RUN"), default=True),
@@ -405,6 +486,7 @@ class Settings:
             # Multi-timeframe
             htf_timeframe=os.getenv("HTF_TIMEFRAME", "4h").strip(),
             htf_confirmation_enabled=_parse_bool(os.getenv("HTF_CONFIRMATION_ENABLED"), default=False),
+            single_symbol_decision=_parse_bool(os.getenv("SINGLE_SYMBOL_DECISION"), default=True),
             # Execution validation
             max_slippage_pct=_parse_float(os.getenv("MAX_SLIPPAGE_PCT"), default=0.005),
             # Fast position monitor
@@ -413,6 +495,19 @@ class Settings:
             # Spot bracket orders
             spot_sl_limit_offset_pct=_parse_float(os.getenv("SPOT_SL_LIMIT_OFFSET_PCT"), default=0.01),
             spot_tp_limit_offset_pct=_parse_float(os.getenv("SPOT_TP_LIMIT_OFFSET_PCT"), default=0.002),
+            # Futures leverage
+            futures_leverage=_parse_int(os.getenv("FUTURES_LEVERAGE"), default=1),
+            # Signal Scorer
+            use_signal_scorer=_parse_bool(os.getenv("USE_SIGNAL_SCORER"), default=False),
+            scoring_entry_threshold=_parse_float(os.getenv("SCORING_ENTRY_THRESHOLD"), default=0.30),
+            scoring_exit_threshold=_parse_float(os.getenv("SCORING_EXIT_THRESHOLD"), default=0.20),
+            scoring_w_signal=_parse_float(os.getenv("SCORING_W_SIGNAL"), default=0.25),
+            scoring_w_direction=_parse_float(os.getenv("SCORING_W_DIRECTION"), default=0.25),
+            scoring_w_trend=_parse_float(os.getenv("SCORING_W_TREND"), default=0.15),
+            scoring_w_momentum=_parse_float(os.getenv("SCORING_W_MOMENTUM"), default=0.15),
+            scoring_w_volume=_parse_float(os.getenv("SCORING_W_VOLUME"), default=0.10),
+            scoring_w_key_levels=_parse_float(os.getenv("SCORING_W_KEY_LEVELS"), default=0.10),
+            scoring_choppiness_penalty=_parse_float(os.getenv("SCORING_CHOPPINESS_PENALTY"), default=0.3),
             # ML / OHLCV
             ml_timeframe=os.getenv("ML_TIMEFRAME", "4h").strip().lower(),
             # Debug / directories
@@ -433,6 +528,10 @@ class Settings:
             rag_density_penalty_multiplier=_parse_float(os.getenv("RAG_DENSITY_PENALTY_MULTIPLIER"), default=0.5),
             rag_density_boost_multiplier=_parse_float(os.getenv("RAG_DENSITY_BOOST_MULTIPLIER"), default=1.2),
             rag_cooccurrence_multiplier=_parse_float(os.getenv("RAG_COOCCURRENCE_MULTIPLIER"), default=1.5),
+            # RAG retrieval counts
+            rag_retrieval_news=_parse_int(os.getenv("RAG_RETRIEVAL_NEWS"), default=3),
+            rag_retrieval_macro=_parse_int(os.getenv("RAG_RETRIEVAL_MACRO"), default=1),
+            rag_retrieval_memory=_parse_int(os.getenv("RAG_RETRIEVAL_MEMORY"), default=2),
         )
 
     def ohlcv_csv_path(self, symbol: str, interval: str) -> str:
@@ -510,8 +609,11 @@ class Settings:
         if self.provider not in _VALID_PROVIDERS:
             raise ValueError("provider")
 
-        if self.ml_timeframe not in {"1m", "5m", "15m", "1h", "4h"}:
-            raise ValueError("ml_timeframe must be one of: 1m, 5m, 15m, 1h, 4h")
+        if not (1 <= self.futures_leverage <= 125):
+            raise ValueError("futures_leverage must be between 1 and 125")
+
+        if self.ml_timeframe not in {"1m", "5m", "15m", "30m", "1h", "4h"}:
+            raise ValueError("ml_timeframe must be one of: 1m, 5m, 15m, 30m, 1h, 4h")
 
         if self.binance_product not in {"spot", "usdt_futures"}:
             raise ValueError("binance_product")
@@ -519,8 +621,8 @@ class Settings:
         if self.max_order_usdt <= 0 or self.max_order_usdt > 10000:
             raise ValueError("max_order_usdt")
 
-        if self.bot_interval_seconds < 60:
-            raise ValueError("bot_interval_seconds")
+        if self.bot_interval_seconds < 0:
+            raise ValueError("bot_interval_seconds must be >= 0 (0 = auto-align to candle)")
 
 
 __all__ = ["Settings"]

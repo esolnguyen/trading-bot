@@ -5,34 +5,52 @@ from __future__ import annotations
 from src.domain.analysis import PatternResult
 from src.domain.market import OHLCVCandle
 
-# Only look at the most recent candles for reversal patterns.
-# 200 candles = ~8 days on 1h TF; coincidental price matches are almost
-# guaranteed over that window. 60 candles (~2.5 days) is actionable.
-_PATTERN_WINDOW = 60
-# Minimum candles between the two legs of a double pattern (10h on 1h TF).
-_MIN_LEG_SEPARATION = 10
-# At least one leg must be within this many candles of the end of the window.
-_RECENCY_CANDLES = 20
-# Price similarity tolerance for the two legs (1% is tighter than the old 2%).
-_LEG_TOLERANCE = 0.01
-# The valley/peak between the two legs must be at least this far from the legs.
-_NECKLINE_MIN_MOVE = 0.015  # 1.5%
+# Candle window scaled by timeframe so the lookback covers a consistent
+# wall-clock duration regardless of candle size.
+# Target: ~1.5 days of price action for reversal patterns.
+_WINDOW_BY_TF: dict[str, int] = {
+    "1m":  2160,  # 1.5 days
+    "5m":   432,  # 1.5 days
+    "15m":  144,  # 1.5 days
+    "30m":   72,  # 1.5 days
+    "1h":    60,  # 2.5 days  (original default)
+    "2h":    30,  # 2.5 days
+    "4h":    20,  # 3.3 days
+    "6h":    16,  # 4 days
+    "8h":    12,  # 4 days
+    "12h":    8,  # 4 days
+    "1d":    30,  # 1 month
+}
+_DEFAULT_WINDOW = 60
+
+# Leg separation and recency also scale with window size so the proportions
+# stay meaningful (leg_sep ≈ window/6, recency ≈ window/3).
+_LEG_TOLERANCE      = 0.01   # legs must match within 1%
+_NECKLINE_MIN_MOVE  = 0.015  # valley/peak must be ≥1.5% from the legs
 
 
 class PatternAnalyzer:
     """Detect simple price-action patterns from recent candles."""
 
-    def analyze(self, symbol: str, candles: list[OHLCVCandle]) -> PatternResult:
-        window = candles[-_PATTERN_WINDOW:] if len(candles) > _PATTERN_WINDOW else candles
+    def analyze(
+        self,
+        symbol: str,
+        candles: list[OHLCVCandle],
+        timeframe: str = "1h",
+    ) -> PatternResult:
+        window_size    = _WINDOW_BY_TF.get(timeframe, _DEFAULT_WINDOW)
+        leg_sep        = max(5, window_size // 6)   # minimum candles between legs
+        recency        = max(5, window_size // 3)   # one leg must be in last N candles
 
-        double_bottom = self._has_double_bottom(window)
-        double_top = self._has_double_top(window)
+        window = candles[-window_size:] if len(candles) > window_size else candles
 
-        # Mutual exclusivity: if both fire, keep only the more recent signal.
-        # Compare the index of their right-side leg; higher index = more recent.
+        double_bottom = self._has_double_bottom(window, leg_sep, recency)
+        double_top    = self._has_double_top(window, leg_sep, recency)
+
+        # Mutual exclusivity: keep the more recent signal.
         if double_bottom and double_top:
             bottom_recency = self._most_recent_leg_index(window, kind="min")
-            top_recency = self._most_recent_leg_index(window, kind="max")
+            top_recency    = self._most_recent_leg_index(window, kind="max")
             if bottom_recency >= top_recency:
                 double_top = False
             else:
@@ -44,11 +62,13 @@ class PatternAnalyzer:
         if double_top:
             patterns.append("double_top")
 
-        support = self._find_repeated_level(candles[-50:], kind="support")
+        # Support/resistance: scan last 50 candles (or full window for short TFs)
+        sr_window = min(50, window_size)
+        support    = self._find_repeated_level(candles[-sr_window:], kind="support")
         if support is not None:
             patterns.append("support_level")
 
-        resistance = self._find_repeated_level(candles[-50:], kind="resistance")
+        resistance = self._find_repeated_level(candles[-sr_window:], kind="resistance")
         if resistance is not None:
             patterns.append("resistance_level")
 
@@ -68,50 +88,42 @@ class PatternAnalyzer:
     # Double bottom / top
     # ------------------------------------------------------------------
 
-    def _has_double_bottom(self, candles: list[OHLCVCandle]) -> bool:
+    def _has_double_bottom(self, candles: list[OHLCVCandle], leg_sep: int, recency: int) -> bool:
         """Two similar lows separated by a significant rally, at least one recent."""
         minima = self._local_extrema(candles, kind="min")
         n = len(candles)
         for li, lv in minima:
             for ri, rv in minima:
-                if ri - li < _MIN_LEG_SEPARATION:
+                if ri - li < leg_sep:
                     continue
-                # Recency: right leg must be near the end of the window
-                if ri < n - _RECENCY_CANDLES:
+                if ri < n - recency:
                     continue
                 avg = (lv + rv) / 2.0
                 if avg == 0:
                     continue
-                # Legs must be similar in price
                 if abs(lv - rv) / avg > _LEG_TOLERANCE:
                     continue
-                # Valley validation: the highest high between the two legs
-                # must be meaningfully above the average low (neckline)
                 peak_between = max(c.high for c in candles[li:ri + 1])
                 if (peak_between - avg) / avg < _NECKLINE_MIN_MOVE:
                     continue
                 return True
         return False
 
-    def _has_double_top(self, candles: list[OHLCVCandle]) -> bool:
+    def _has_double_top(self, candles: list[OHLCVCandle], leg_sep: int, recency: int) -> bool:
         """Two similar highs separated by a significant pullback, at least one recent."""
         maxima = self._local_extrema(candles, kind="max")
         n = len(candles)
         for li, lv in maxima:
             for ri, rv in maxima:
-                if ri - li < _MIN_LEG_SEPARATION:
+                if ri - li < leg_sep:
                     continue
-                # Recency: right leg must be near the end of the window
-                if ri < n - _RECENCY_CANDLES:
+                if ri < n - recency:
                     continue
                 avg = (lv + rv) / 2.0
                 if avg == 0:
                     continue
-                # Legs must be similar in price
                 if abs(lv - rv) / avg > _LEG_TOLERANCE:
                     continue
-                # Neckline validation: the lowest low between the two legs
-                # must be meaningfully below the average high
                 trough_between = min(c.low for c in candles[li:ri + 1])
                 if (avg - trough_between) / avg < _NECKLINE_MIN_MOVE:
                     continue

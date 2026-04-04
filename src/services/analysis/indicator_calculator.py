@@ -31,6 +31,7 @@ class IndicatorCalculator:
         adx = self._adx(highs, lows, closes, period=14)
         obv_slope = self._obv_slope(closes, volumes, period=20)
         choppiness = self._choppiness(highs, lows, closes, period=14)
+        cci_14 = self._cci(highs, lows, closes, period=14)
 
         values = [
             rsi_14,
@@ -45,6 +46,7 @@ class IndicatorCalculator:
             volume_sma_20,
             atr,
             adx,
+            cci_14,
         ]
         if any(math.isnan(value) or math.isinf(value) for value in values):
             raise ValueError("Indicator calculation produced invalid values")
@@ -65,6 +67,7 @@ class IndicatorCalculator:
             obv_slope=obv_slope,
             choppiness=choppiness,
             vol_ratio=vol_ratio,
+            cci_14=cci_14,
         )
 
     @staticmethod
@@ -206,6 +209,18 @@ class IndicatorCalculator:
         # Normalise by absolute mean so the value is scale-independent
         abs_mean = abs(y_mean) if y_mean != 0 else 1.0
         return slope / abs_mean
+
+    @staticmethod
+    def _cci(highs: list[float], lows: list[float], closes: list[float], period: int) -> float:
+        """Commodity Channel Index: (typical_price - SMA_tp) / (0.015 * mean_deviation)."""
+        if len(closes) < period:
+            return 0.0
+        tp = [(h + l + c) / 3.0 for h, l, c in zip(highs[-period:], lows[-period:], closes[-period:])]
+        mean_tp = sum(tp) / period
+        mad = sum(abs(x - mean_tp) for x in tp) / period
+        if mad == 0:
+            return 0.0
+        return (tp[-1] - mean_tp) / (0.015 * mad)
 
     def _choppiness(self, highs: list[float], lows: list[float], closes: list[float], period: int) -> float:
         """Choppiness Index: 100 * log10(ΣTR_n / (HH_n - LL_n)) / log10(n).

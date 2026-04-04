@@ -18,16 +18,30 @@ logger = logging.getLogger(__name__)
 class AnomalyDetector:
     """Detect abnormal market conditions using Isolation Forest."""
 
-    def __init__(self, timeframe: str = "4h") -> None:
-        self._bundle: dict[str, Any] | None = load(f"isolation_forest_{timeframe}")
+    def __init__(self, timeframe: str = "4h", symbols: list[str] | None = None) -> None:
+        self._fallback: dict[str, Any] | None = load(f"isolation_forest_{timeframe}")
+        self._bundles: dict[str, Any] = {}
+        for sym in (symbols or []):
+            bundle = load(f"isolation_forest_{sym.lower()}_{timeframe}")
+            if bundle is not None:
+                self._bundles[sym.upper()] = bundle
+        # Keep legacy attribute pointing at fallback for external callers
+        self._bundle = self._fallback
+
+    def _get_bundle(self, symbol: str | None) -> dict[str, Any] | None:
+        if symbol:
+            return self._bundles.get(symbol.upper(), self._fallback)
+        return self._fallback
 
     def is_anomaly(self, snapshot: Any, indicators: Any) -> bool:
         """Return True if current market conditions are anomalous."""
-        if self._bundle is None:
+        symbol = getattr(snapshot, "symbol", None)
+        bundle = self._get_bundle(symbol)
+        if bundle is None:
             return False
         try:
-            model = self._bundle["model"]
-            feature_cols: list[str] = self._bundle["feature_cols"]
+            model = bundle["model"]
+            feature_cols: list[str] = bundle["feature_cols"]
             row = self._build_row(snapshot, indicators, feature_cols)
             prediction = model.predict([row])[0]  # -1 = anomaly, 1 = normal
             if prediction == -1:

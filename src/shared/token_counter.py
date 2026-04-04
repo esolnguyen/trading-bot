@@ -14,6 +14,7 @@ from src.domain.analysis.stats import ProviderCostStats, SessionCosts, TokenUsag
 
 try:
     import tiktoken as _tiktoken
+
     _HAS_TIKTOKEN = True
 except ImportError:
     _tiktoken = None  # type: ignore[assignment]
@@ -38,7 +39,9 @@ class ModelPricing:
     def _load_pricing(self) -> Dict[str, Any]:
         # Try several relative paths
         candidates = [
-            os.path.join(os.path.dirname(__file__), "..", "..", "config", "model_pricing.json"),
+            os.path.join(
+                os.path.dirname(__file__), "..", "..", "config", "model_pricing.json"
+            ),
             os.path.join("config", "model_pricing.json"),
         ]
         for path in candidates:
@@ -51,8 +54,9 @@ class ModelPricing:
                     pass
         return {"google": {}, "openrouter": {}}
 
-    def get_cost(self, provider: str, model: str, input_tokens: int,
-                 output_tokens: int) -> Optional[float]:
+    def get_cost(
+        self, provider: str, model: str, input_tokens: int, output_tokens: int
+    ) -> Optional[float]:
         assert ModelPricing._pricing is not None
         provider_pricing = ModelPricing._pricing.get(provider, {})
         model_key = self._normalize_model_key(model)
@@ -66,8 +70,12 @@ class ModelPricing:
                     break
         if not model_pricing:
             return None
-        input_cost = (input_tokens / 1_000_000) * model_pricing.get("input_per_million", 0)
-        output_cost = (output_tokens / 1_000_000) * model_pricing.get("output_per_million", 0)
+        input_cost = (input_tokens / 1_000_000) * model_pricing.get(
+            "input_per_million", 0
+        )
+        output_cost = (output_tokens / 1_000_000) * model_pricing.get(
+            "output_per_million", 0
+        )
         return input_cost + output_cost
 
     @staticmethod
@@ -91,7 +99,10 @@ class TokenCounter:
         else:
             self.tokenizer = None
         self.session_tokens: Dict[str, int] = {
-            "prompt": 0, "completion": 0, "system": 0, "total": 0,
+            "prompt": 0,
+            "completion": 0,
+            "system": 0,
+            "total": 0,
         }
         self.session_costs = SessionCosts()
         self.request_usage: Optional[TokenUsageStats] = None
@@ -113,8 +124,13 @@ class TokenCounter:
         self.session_tokens["total"] += token_count
         return token_count
 
-    def record_api_usage(self, provider: str, prompt_tokens: int,
-                         completion_tokens: int, cost: Optional[float] = None) -> None:
+    def record_api_usage(
+        self,
+        provider: str,
+        prompt_tokens: int,
+        completion_tokens: int,
+        cost: Optional[float] = None,
+    ) -> None:
         self.request_usage = TokenUsageStats(
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
@@ -144,15 +160,25 @@ class TokenCounter:
             return f"${cost:.4f}"
         return f"${cost:.2f}"
 
-    def process_response_usage(self, usage: Optional[Dict[str, Any]], provider: str = "unknown",
-                                logger: Any = None, fallback_text: Optional[str] = None) -> None:
+    def process_response_usage(
+        self,
+        usage: Optional[Dict[str, Any]],
+        provider: str = "unknown",
+        logger: Any = None,
+        fallback_text: Optional[str] = None,
+    ) -> None:
         if usage:
             pt = int(usage.get("prompt_tokens", 0))
             ct = int(usage.get("completion_tokens", 0))
             cost = usage.get("cost")
             self.record_api_usage(provider, pt, ct, cost)
             if logger:
-                logger.info("Tokens: %s in / %s out (total %s)", f"{pt:,}", f"{ct:,}", f"{pt+ct:,}")
+                logger.info(
+                    "Tokens: %s in / %s out (total %s)",
+                    f"{pt:,}",
+                    f"{ct:,}",
+                    f"{pt+ct:,}",
+                )
                 if cost is not None:
                     logger.info("Request cost: %s", self.format_cost(cost))
         elif fallback_text:
@@ -182,8 +208,13 @@ class TokenCounter:
     def get_total_session_cost(self) -> float:
         return self.session_costs.total
 
-    def format_usage_display(self, provider: str, prompt_tokens: int,
-                              completion_tokens: int, cost: Optional[float] = None) -> str:
+    def format_usage_display(
+        self,
+        provider: str,
+        prompt_tokens: int,
+        completion_tokens: int,
+        cost: Optional[float] = None,
+    ) -> str:
         token_str = f"Tokens: {prompt_tokens:,} in / {completion_tokens:,} out"
         if cost is not None and provider in ("openrouter", "google"):
             cost_str = self.PROVIDER_COST_MESSAGES[provider].format(cost=cost)
@@ -258,8 +289,9 @@ class CostStorage:
             temp_path = None
             try:
                 directory = os.path.dirname(self.file_path)
-                with tempfile.NamedTemporaryFile(delete=False, mode="w", encoding="utf-8",
-                                                  dir=directory or ".") as f:
+                with tempfile.NamedTemporaryFile(
+                    delete=False, mode="w", encoding="utf-8", dir=directory or "."
+                ) as f:
                     temp_path = f.name
                     json.dump(data, f, indent=2)
                     f.flush()
@@ -275,8 +307,13 @@ class CostStorage:
                     except OSError:
                         pass
 
-    def record_usage(self, provider: str, prompt_tokens: int,
-                     completion_tokens: int, cost: Optional[float] = None) -> None:
+    def record_usage(
+        self,
+        provider: str,
+        prompt_tokens: int,
+        completion_tokens: int,
+        cost: Optional[float] = None,
+    ) -> None:
         with self._lock:
             if provider not in self._providers:
                 self._providers[provider] = ProviderCostStats()
@@ -303,6 +340,7 @@ class CostStorage:
 
     def reset(self) -> None:
         from datetime import datetime, timezone
+
         self._init_defaults()
         self._last_reset = datetime.now(timezone.utc).isoformat()
         self.save()

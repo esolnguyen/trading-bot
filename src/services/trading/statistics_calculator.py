@@ -17,8 +17,7 @@ class StatisticsCalculator:
 
     @staticmethod
     def calculate_from_history(
-        trade_history: List[Dict[str, Any]],
-        initial_capital: float = 10000.0
+        trade_history: List[Dict[str, Any]], initial_capital: float = 10000.0
     ) -> TradingStatistics:
         """Calculate all statistics from full trade history using numpy optimization."""
         if not trade_history:
@@ -39,7 +38,9 @@ class StatisticsCalculator:
         win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0.0
 
         total_pnl_quote = float(np.sum(pnl_amounts))
-        total_pnl_pct = (total_pnl_quote / initial_capital) * 100 if initial_capital > 0 else 0.0
+        total_pnl_pct = (
+            (total_pnl_quote / initial_capital) * 100 if initial_capital > 0 else 0.0
+        )
 
         sum_trade_pct = float(np.sum(pnl_percentages))
         avg_trade_pct = sum_trade_pct / total_trades if total_trades > 0 else 0.0
@@ -80,7 +81,9 @@ class StatisticsCalculator:
         )
 
     @staticmethod
-    def _extract_closed_trades(trade_history: List[Dict[str, Any]]) -> List[ClosedTradeResult]:
+    def _extract_closed_trades(
+        trade_history: List[Dict[str, Any]],
+    ) -> List[ClosedTradeResult]:
         """Extract closed trades with P&L from history."""
         closed_trades: List[ClosedTradeResult] = []
         open_position: Optional[Dict[str, Any]] = None
@@ -93,19 +96,33 @@ class StatisticsCalculator:
                 exit_price = trade.get("price", 0)
                 quantity = open_position.get("quantity", 0)
                 if open_position.get("action", "").upper() == "BUY":
-                    pnl_pct = ((exit_price - entry_price) / entry_price) * 100 if entry_price > 0 else 0
+                    pnl_pct = (
+                        ((exit_price - entry_price) / entry_price) * 100
+                        if entry_price > 0
+                        else 0
+                    )
                     pnl_quote = (exit_price - entry_price) * quantity
                 else:
-                    pnl_pct = ((entry_price - exit_price) / entry_price) * 100 if entry_price > 0 else 0
+                    pnl_pct = (
+                        ((entry_price - exit_price) / entry_price) * 100
+                        if entry_price > 0
+                        else 0
+                    )
                     pnl_quote = (entry_price - exit_price) * quantity
-                closed_trades.append(ClosedTradeResult(
-                    entry_price=entry_price,
-                    exit_price=exit_price,
-                    pnl_pct=pnl_pct,
-                    pnl_quote=pnl_quote,
-                    quantity=quantity,
-                    direction="LONG" if open_position.get("action", "").upper() == "BUY" else "SHORT",
-                ))
+                closed_trades.append(
+                    ClosedTradeResult(
+                        entry_price=entry_price,
+                        exit_price=exit_price,
+                        pnl_pct=pnl_pct,
+                        pnl_quote=pnl_quote,
+                        quantity=quantity,
+                        direction=(
+                            "LONG"
+                            if open_position.get("action", "").upper() == "BUY"
+                            else "SHORT"
+                        ),
+                    )
+                )
                 open_position = None
         return closed_trades
 
@@ -119,7 +136,7 @@ class StatisticsCalculator:
         peaks = np.maximum.accumulate(equity_curve)
 
         # Avoid division by zero
-        with np.errstate(divide='ignore', invalid='ignore'):
+        with np.errstate(divide="ignore", invalid="ignore"):
             drawdowns = np.where(peaks > 0, (equity_curve - peaks) / peaks * 100, 0.0)
 
         max_dd = float(np.min(drawdowns)) if len(drawdowns) > 0 else 0.0
@@ -131,8 +148,7 @@ class StatisticsCalculator:
 
     @staticmethod
     def _calculate_sharpe_ratio(
-        returns: np.ndarray,
-        risk_free_rate: float = 0.0
+        returns: np.ndarray, risk_free_rate: float = 0.0
     ) -> float:
         """Calculate Sharpe ratio using numpy."""
         if len(returns) < 2:
@@ -150,8 +166,7 @@ class StatisticsCalculator:
 
     @staticmethod
     def _calculate_sortino_ratio(
-        returns: np.ndarray,
-        risk_free_rate: float = 0.0
+        returns: np.ndarray, risk_free_rate: float = 0.0
     ) -> float:
         """Calculate Sortino ratio using numpy."""
         if len(returns) < 2:
@@ -163,11 +178,11 @@ class StatisticsCalculator:
         # Downside Deviation = sqrt(sum(min(0, r)^2) / N)
         # We replace positive returns with 0, then calculate Root Mean Square
         negative_returns = np.minimum(returns, 0)
-        downside_deviation = np.sqrt(np.mean(negative_returns ** 2))
+        downside_deviation = np.sqrt(np.mean(negative_returns**2))
 
         # Use isclose to handle floating point precision issues near zero
         if np.isclose(downside_deviation, 0):
-            return float('inf') if mean_return > 0 else 0.0
+            return float("inf") if mean_return > 0 else 0.0
 
         sortino = (mean_return - risk_free_rate) / downside_deviation
         return round(float(sortino), 2)
@@ -179,6 +194,6 @@ class StatisticsCalculator:
         gross_loss = abs(np.sum(pnl_amounts[pnl_amounts < 0]))
 
         if gross_loss == 0:
-            return float('inf') if gross_profit > 0 else 0.0
+            return float("inf") if gross_profit > 0 else 0.0
 
         return round(float(gross_profit / gross_loss), 2)

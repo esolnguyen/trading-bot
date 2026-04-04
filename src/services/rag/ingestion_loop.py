@@ -122,8 +122,10 @@ class IngestionLoop:
                 self.logger.warning("Skipping macro cycle after HTTP 429 from %s", source_name)
                 return
             self.logger.error("HTTP error in macro source %s: %s", source_name, exc)
+        except requests.Timeout as exc:
+            self.logger.warning("Timeout fetching macro source %s, will retry next cycle: %s", source_name, exc)
         except requests.ConnectionError as exc:
-            self.logger.error("Connection error in macro source %s: %s", source_name, exc)
+            self.logger.warning("Connection error in macro source %s, will retry next cycle: %s", source_name, exc)
         except Exception as exc:  # noqa: BLE001
             self.logger.error("Unexpected error in macro source %s: %s", source_name, exc)
 

@@ -30,6 +30,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--timeframe",     default="5m", choices=["1m", "5m", "15m", "1h", "4h", "1d"],
                         help="Candle timeframe; auto-selects --csv and --out if not overridden.")
+    parser.add_argument("--symbol",        default=None, help="Symbol e.g. btcusdt — prefixes output filename")
     parser.add_argument("--csv",           default=None)
     parser.add_argument("--out",           default=None)
     parser.add_argument("--rows",          type=int,   default=10_000)
@@ -37,10 +38,12 @@ def main() -> None:
                         help="Expected fraction of anomalies. Start conservative (0.01).")
     args = parser.parse_args()
 
+    sym = args.symbol.lower() if args.symbol else "btcusdt"
+    sym_prefix = f"{sym}_" if args.symbol else ""
     if args.csv is None:
-        args.csv = f"data/ohlcv/btcusdt_{args.timeframe}.csv"
+        args.csv = f"data/ohlcv/{sym}_{args.timeframe}.csv"
     if args.out is None:
-        args.out = f"models/isolation_forest_{args.timeframe}.joblib"
+        args.out = f"models/isolation_forest_{sym_prefix}{args.timeframe}.joblib"
 
     print(f"Loading {args.csv} (last {args.rows:,} rows) …")
     df = pd.read_csv(args.csv)

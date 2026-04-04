@@ -1,8 +1,9 @@
 """A2: Multi-Timeframe Alignment Analyzer.
 
-Fetches 1H, 4H, and 1D candles for each symbol and computes a compact
-alignment summary for the LLM prompt. Uses existing BinanceFeed and
-IndicatorCalculator — no new dependencies.
+Fetches candles at higher timeframes and computes a compact alignment summary
+for the LLM prompt. The HTF stack is derived from the trading timeframe so that
+15m traders see (15m/1H/4H) and 1h traders see (1H/4H/1D).
+Uses existing BinanceFeed and IndicatorCalculator — no new dependencies.
 """
 
 from __future__ import annotations
@@ -15,20 +16,37 @@ from src.services.analysis.indicator_calculator import IndicatorCalculator
 
 logger = logging.getLogger(__name__)
 
-_TIMEFRAMES: list[tuple[str, str]] = [
-    ("1h",  "1H"),
-    ("4h",  "4H"),
-    ("1d",  "1D"),
-]
+# Maps each trading timeframe to the ordered list of timeframes to analyse.
+# The first entry is the trading TF itself (current signal); the rest are HTFs.
+_HTF_STACKS: dict[str, list[tuple[str, str]]] = {
+    "1m":  [("1m", "1M"), ("5m", "5M"), ("15m", "15M"), ("1h", "1H")],
+    "5m":  [("5m", "5M"), ("15m", "15M"), ("1h", "1H"), ("4h", "4H")],
+    "15m": [("15m", "15M"), ("1h", "1H"), ("4h", "4H")],
+    "30m": [("30m", "30M"), ("1h", "1H"), ("4h", "4H")],
+    "1h":  [("1h", "1H"), ("4h", "4H"), ("1d", "1D")],
+    "2h":  [("2h", "2H"), ("4h", "4H"), ("1d", "1D")],
+    "4h":  [("4h", "4H"), ("1d", "1D")],
+    "6h":  [("6h", "6H"), ("1d", "1D")],
+    "8h":  [("8h", "8H"), ("1d", "1D")],
+    "12h": [("12h", "12H"), ("1d", "1D")],
+    "1d":  [("1d", "1D")],
+}
+
 _CANDLE_LIMIT = 200
 
 
 class MultiTimeframeAnalyzer:
     """Build a multi-timeframe alignment summary for the LLM context."""
 
-    def __init__(self, feed: Any) -> None:
+    def __init__(self, feed: Any, trading_timeframe: str = "1h") -> None:
         self._feed = feed
         self._calc = IndicatorCalculator()
+        # Derive the HTF stack for the configured trading timeframe.
+        # Falls back to the classic 1H/4H/1D stack if the TF is unknown.
+        self._timeframes: list[tuple[str, str]] = _HTF_STACKS.get(
+            trading_timeframe,
+            [("1h", "1H"), ("4h", "4H"), ("1d", "1D")],
+        )
 
     async def build_summary(self, symbol: str, current_tf_signal: str) -> str | None:
         """Return a formatted multi-TF summary string or None on failure."""
@@ -36,7 +54,7 @@ class MultiTimeframeAnalyzer:
         lines.append(f"- Current TF: {current_tf_signal}")
 
         tf_results: list[tuple[str, str]] = []
-        for tf, label in _TIMEFRAMES:
+        for tf, label in self._timeframes:
             result = await self._analyze_tf(symbol, tf, label)
             if result:
                 tf_results.append((label, result))

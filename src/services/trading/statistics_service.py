@@ -42,9 +42,16 @@ class TradingStatisticsService:
             initial_capital: Starting capital for equity curve calculation
         """
         history = self.persistence.load_trade_history()
-        self.statistics = StatisticsCalculator.calculate_from_history(history, initial_capital)
+        self.statistics = StatisticsCalculator.calculate_from_history(
+            history, initial_capital
+        )
         self.persistence.save_statistics(self.statistics)
-        self.logger.info("Recalculated statistics: %s trades, Win Rate: %.1f%%, Sharpe: %.2f", self.statistics.total_trades, self.statistics.win_rate, self.statistics.sharpe_ratio)
+        self.logger.info(
+            "Recalculated statistics: %s trades, Win Rate: %.1f%%, Sharpe: %.2f",
+            self.statistics.total_trades,
+            self.statistics.win_rate,
+            self.statistics.sharpe_ratio,
+        )
 
     def get_current_capital(self, initial_capital: float) -> float:
         """Get current capital (initial + realized P&L).
@@ -80,7 +87,7 @@ class TradingStatisticsService:
             f"- Sharpe Ratio: {stats.sharpe_ratio:.2f} | Sortino: {stats.sortino_ratio:.2f}",
         ]
 
-        if stats.profit_factor > 0 and stats.profit_factor != float('inf'):
+        if stats.profit_factor > 0 and stats.profit_factor != float("inf"):
             lines.append(f"- Profit Factor: {stats.profit_factor:.2f}")
 
         return "\n".join(lines)

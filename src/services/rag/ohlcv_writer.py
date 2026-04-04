@@ -10,7 +10,7 @@ from __future__ import annotations
 import csv
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -18,9 +18,17 @@ logger = logging.getLogger(__name__)
 class OHLCVWriter:
     """Append the latest closed candle to a CSV file after each cycle."""
 
-    def __init__(self, path: str = "data/ohlcv/btcusdt_4h.csv") -> None:
+    def __init__(
+        self,
+        path: str = "data/ohlcv/btcusdt_4h.csv",
+        *,
+        on_append: Callable[[], None] | None = None,
+    ) -> None:
         self._path = Path(path)
         self._last_ts: int = 0
+        # Optional callback invoked after a new row is written (used to
+        # invalidate the HistoricalPercentileScorer in-memory cache).
+        self._on_append = on_append
         self._ensure_header()
 
     def _ensure_header(self) -> None:
@@ -55,5 +63,7 @@ class OHLCVWriter:
             with open(self._path, "a", newline="") as f:
                 csv.writer(f).writerow([ts, c.open, c.high, c.low, c.close, c.volume])
             self._last_ts = ts
+            if self._on_append is not None:
+                self._on_append()
         except Exception as exc:  # noqa: BLE001
             logger.warning("OHLCVWriter.append failed: %s", exc)

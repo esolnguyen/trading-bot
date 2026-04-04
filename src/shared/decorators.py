@@ -11,8 +11,12 @@ from typing import Any, Dict
 # Optional heavy dependencies
 try:
     import ccxt as _ccxt
+
     _CCXT_NETWORK_ERRS: tuple[type, ...] = (
-        _ccxt.NetworkError, _ccxt.RequestTimeout, _ccxt.DDoSProtection, _ccxt.RateLimitExceeded
+        _ccxt.NetworkError,
+        _ccxt.RequestTimeout,
+        _ccxt.DDoSProtection,
+        _ccxt.RateLimitExceeded,
     )
     _CCXT_EXCHANGE_ERR = _ccxt.ExchangeError
 except ImportError:
@@ -26,13 +30,18 @@ except ImportError:
 
 try:
     import aiohttp as _aiohttp
-    _AIOHTTP_ERRS: tuple[type, ...] = (_aiohttp.ClientConnectorError, _aiohttp.ClientOSError)
+
+    _AIOHTTP_ERRS: tuple[type, ...] = (
+        _aiohttp.ClientConnectorError,
+        _aiohttp.ClientOSError,
+    )
 except ImportError:
     _aiohttp = None  # type: ignore[assignment]
     _AIOHTTP_ERRS = ()
 
 try:
     import aiodns as _aiodns
+
     _AIODNS_ERRS: tuple[type, ...] = (_aiodns.error.DNSError,)
 except ImportError:
     _aiodns = None  # type: ignore[assignment]
@@ -40,13 +49,23 @@ except ImportError:
 
 import socket
 
-_RATE_LIMIT_PHRASES = frozenset({
-    "too many requests", "rate limit", "429", "ratelimit",
-    "ddos protection", "system-level rate limit exceeded",
-})
+_RATE_LIMIT_PHRASES = frozenset(
+    {
+        "too many requests",
+        "rate limit",
+        "429",
+        "ratelimit",
+        "ddos protection",
+        "system-level rate limit exceeded",
+    }
+)
 
 _NETWORK_EXCEPTIONS: tuple[type, ...] = (
-    TimeoutError, ConnectionResetError, asyncio.TimeoutError, socket.gaierror, OSError,
+    TimeoutError,
+    ConnectionResetError,
+    asyncio.TimeoutError,
+    socket.gaierror,
+    OSError,
     *_CCXT_NETWORK_ERRS,
     *_AIOHTTP_ERRS,
     *_AIODNS_ERRS,
@@ -96,10 +115,21 @@ def _should_retry_api_error(error_value: Any) -> bool:
 
 
 class _RetryContext:
-    def __init__(self, instance: Any, func: Any, args: Any, kwargs: Any,
-                 max_retries: int, initial_delay: float, backoff_factor: float, max_delay: float) -> None:
+    def __init__(
+        self,
+        instance: Any,
+        func: Any,
+        args: Any,
+        kwargs: Any,
+        max_retries: int,
+        initial_delay: float,
+        backoff_factor: float,
+        max_delay: float,
+    ) -> None:
         self.logger = getattr(instance, "logger", None)
-        self.pair = kwargs.get("pair") or (args[0] if args and isinstance(args[0], str) else None)
+        self.pair = kwargs.get("pair") or (
+            args[0] if args and isinstance(args[0], str) else None
+        )
         self.class_name = instance.__class__.__name__
         self.func_name = func.__name__
         self.max_retries = max_retries
@@ -117,20 +147,27 @@ class _RetryContext:
 
     def _log_failure(self, error_type: str, error: Exception) -> None:
         prefix = self._format_prefix()
-        _log(self.logger, "error",
-             f"{prefix}Function {self.class_name}.{self.func_name} failed after "
-             f"{self.max_retries} retries. Last error: {error_type} - {error}")
+        _log(
+            self.logger,
+            "error",
+            f"{prefix}Function {self.class_name}.{self.func_name} failed after "
+            f"{self.max_retries} retries. Last error: {error_type} - {error}",
+        )
 
-    async def _handle_retryable_error(self, template: str, error: Exception,
-                                       error_type: str | None = None) -> bool:
+    async def _handle_retryable_error(
+        self, template: str, error: Exception, error_type: str | None = None
+    ) -> bool:
         if not self._should_continue_retrying():
             self._log_failure(error_type or type(error).__name__, error)
             return False
         prefix = self._format_prefix()
-        _log(self.logger, "warning",
-             f"{prefix}{template.format(self.attempt)} for "
-             f"{self.class_name}.{self.func_name} in {self.delay:.2f}s. "
-             f"Type: {type(error).__name__}, Error: {error}")
+        _log(
+            self.logger,
+            "warning",
+            f"{prefix}{template.format(self.attempt)} for "
+            f"{self.class_name}.{self.func_name} in {self.delay:.2f}s. "
+            f"Type: {type(error).__name__}, Error: {error}",
+        )
         await asyncio.sleep(self.delay)
         self.delay = min(self.delay * self.backoff_factor, self.max_delay)
         return True
@@ -142,26 +179,48 @@ class _RetryContext:
     async def handle_exchange_error(self, error: Exception) -> bool:
         if not _is_exchange_rate_limit_error(error):
             prefix = self._format_prefix()
-            _log(self.logger, "error",
-                 f"{prefix}Non-retryable ExchangeError in "
-                 f"{self.class_name}.{self.func_name}: {type(error).__name__} - {error}")
+            _log(
+                self.logger,
+                "error",
+                f"{prefix}Non-retryable ExchangeError in "
+                f"{self.class_name}.{self.func_name}: {type(error).__name__} - {error}",
+            )
             return False
-        return await self._handle_retryable_error("Rate limit (ExchangeError). Retry {}", error, "ExchangeError")
+        return await self._handle_retryable_error(
+            "Rate limit (ExchangeError). Retry {}", error, "ExchangeError"
+        )
 
     def handle_unexpected_error(self, error: Exception) -> None:
         prefix = self._format_prefix()
-        _log(self.logger, "error",
-             f"{prefix}Unexpected error in {self.class_name}.{self.func_name}: "
-             f"{type(error).__name__} - {error}\n{traceback.format_exc()}")
+        _log(
+            self.logger,
+            "error",
+            f"{prefix}Unexpected error in {self.class_name}.{self.func_name}: "
+            f"{type(error).__name__} - {error}\n{traceback.format_exc()}",
+        )
 
 
-def retry_async(max_retries: int = -1, initial_delay: float = 1.0,
-                backoff_factor: float = 2.0, max_delay: float = 3600.0) -> Any:
+def retry_async(
+    max_retries: int = -1,
+    initial_delay: float = 1.0,
+    backoff_factor: float = 2.0,
+    max_delay: float = 3600.0,
+) -> Any:
     """Generic retry decorator for async instance methods."""
+
     def decorator(func: Any) -> Any:
         @functools.wraps(func)
         async def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
-            context = _RetryContext(self, func, args, kwargs, max_retries, initial_delay, backoff_factor, max_delay)
+            context = _RetryContext(
+                self,
+                func,
+                args,
+                kwargs,
+                max_retries,
+                initial_delay,
+                backoff_factor,
+                max_delay,
+            )
             while True:
                 try:
                     return await func(self, *args, **kwargs)
@@ -174,13 +233,24 @@ def retry_async(max_retries: int = -1, initial_delay: float = 1.0,
                 except Exception as e:
                     context.handle_unexpected_error(e)
                     raise
+
         return wrapper
+
     return decorator
 
 
 class _ApiRetryContext:
-    def __init__(self, instance: Any, func: Any, args: Any, kwargs: Any,
-                 max_retries: int, initial_delay: float, backoff_factor: float, max_delay: float) -> None:
+    def __init__(
+        self,
+        instance: Any,
+        func: Any,
+        args: Any,
+        kwargs: Any,
+        max_retries: int,
+        initial_delay: float,
+        backoff_factor: float,
+        max_delay: float,
+    ) -> None:
         self.logger = getattr(instance, "logger", logging.getLogger("Bot"))
         self.model = kwargs.get("model", args[0] if args else "unknown")
         self.func = func
@@ -245,30 +315,59 @@ class _ApiRetryContext:
 
     def _should_retry(self, attempt: int) -> bool:
         if attempt >= self.max_retries:
-            self.logger.error("API call to model %s failed after %s retries", self.model, self.max_retries)
+            self.logger.error(
+                "API call to model %s failed after %s retries",
+                self.model,
+                self.max_retries,
+            )
             return False
         return True
 
     async def _wait_and_increment(self, attempt: int) -> None:
-        wait_time = min(self.initial_delay * (self.backoff_factor ** attempt), self.max_delay)
-        self.logger.warning("API error for model %s. Retry in %.2fs (%s/%s)",
-                            self.model, wait_time, attempt + 1, self.max_retries)
+        wait_time = min(
+            self.initial_delay * (self.backoff_factor**attempt), self.max_delay
+        )
+        self.logger.warning(
+            "API error for model %s. Retry in %.2fs (%s/%s)",
+            self.model,
+            wait_time,
+            attempt + 1,
+            self.max_retries,
+        )
         await asyncio.sleep(wait_time)
 
     def _log_exception(self, e: Exception) -> None:
-        self.logger.error("Error in API call to model %s: %s - %s", self.model, type(e).__name__, e)
+        self.logger.error(
+            "Error in API call to model %s: %s - %s", self.model, type(e).__name__, e
+        )
         self.logger.error("Traceback:\n%s", traceback.format_exc())
 
 
-def retry_api_call(max_retries: int = 3, initial_delay: float = 1.0,
-                   backoff_factor: float = 2.0, max_delay: float = 60.0) -> Any:
+def retry_api_call(
+    max_retries: int = 3,
+    initial_delay: float = 1.0,
+    backoff_factor: float = 2.0,
+    max_delay: float = 60.0,
+) -> Any:
     """Retry decorator for API call methods that return a dict with optional 'error' key."""
+
     def decorator(func: Any) -> Any:
         @functools.wraps(func)
         async def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
-            context = _ApiRetryContext(self, func, args, kwargs, max_retries, initial_delay, backoff_factor, max_delay)
+            context = _ApiRetryContext(
+                self,
+                func,
+                args,
+                kwargs,
+                max_retries,
+                initial_delay,
+                backoff_factor,
+                max_delay,
+            )
             return await context.execute_with_retry()
+
         return wrapper
+
     return decorator
 
 

@@ -19,18 +19,35 @@ _MAX_LEVELS = 4
 class KeyLevelDetector:
     """Surface major historical S/R levels from a cached DBSCAN result."""
 
-    def __init__(self) -> None:
-        self._cache: dict[str, Any] | None = load_json("key_levels_cache")
+    def __init__(self, symbols: list[str] | None = None) -> None:
+        self._fallback: dict[str, Any] | None = load_json("key_levels_cache")
+        self._caches: dict[str, Any] = {}
+        for sym in (symbols or []):
+            cache = load_json(f"key_levels_{sym.lower()}_cache")
+            if cache is not None:
+                self._caches[sym.upper()] = cache
+        self._cache = self._fallback
 
     def reload(self) -> None:
-        """Refresh cache from disk (call daily)."""
-        self._cache = load_json("key_levels_cache")
+        """Refresh all caches from disk (call daily)."""
+        self._fallback = load_json("key_levels_cache")
+        self._cache = self._fallback
+        for sym in list(self._caches.keys()):
+            cache = load_json(f"key_levels_{sym.lower()}_cache")
+            if cache is not None:
+                self._caches[sym] = cache
 
-    def format_context(self, current_price: float) -> str | None:
-        if not self._cache:
+    def _get_cache(self, symbol: str | None) -> dict[str, Any] | None:
+        if symbol:
+            return self._caches.get(symbol.upper(), self._fallback)
+        return self._fallback
+
+    def format_context(self, current_price: float, symbol: str | None = None) -> str | None:
+        cache = self._get_cache(symbol)
+        if not cache:
             return None
 
-        levels: list[dict[str, Any]] = self._cache.get("levels", [])
+        levels: list[dict[str, Any]] = cache.get("levels", [])
         if not levels:
             return None
 

@@ -1,4 +1,5 @@
 """Utilities for data manipulation, serialization, and type conversion."""
+
 from __future__ import annotations
 
 import dataclasses
@@ -8,6 +9,7 @@ from typing import Any, Dict, List, Optional, Type, TypeVar, Union, get_args, ge
 try:
     import numpy as np
     from numpy.typing import NDArray
+
     _HAS_NUMPY = True
 except ImportError:
     _HAS_NUMPY = False
@@ -142,6 +144,7 @@ class SerializableMixin:
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert dataclass to dictionary with ISO format dates."""
+
         def _dict_factory(data: List[tuple[str, Any]]) -> Dict[str, Any]:
             result: Dict[str, Any] = {}
             for key, value in data:
@@ -157,7 +160,9 @@ class SerializableMixin:
     def from_dict(cls: Type[T], data: Dict[str, Any]) -> T:  # type: ignore[misc]
         """Create dataclass instance from dictionary, handling types."""
         if not dataclasses.is_dataclass(cls):
-            raise TypeError(f"{cls.__name__} must be a dataclass to use SerializableMixin")
+            raise TypeError(
+                f"{cls.__name__} must be a dataclass to use SerializableMixin"
+            )
 
         field_types = {f.name: f.type for f in dataclasses.fields(cls)}  # type: ignore[arg-type]
         init_args: Dict[str, Any] = {}

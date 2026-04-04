@@ -48,6 +48,11 @@ class TradingLoop:
         cycle_classifier: Optional[Any] = None,
         multi_tf_analyzer: Optional[Any] = None,
         ohlcv_writer: Optional[Any] = None,
+        # Per-symbol extensions (fix #2 — multi-symbol coverage)
+        ohlcv_writers: Optional[dict[str, Any]] = None,
+        per_symbol_scorers: Optional[dict[str, Any]] = None,
+        # Deterministic signal scorer (replaces LLM when enabled)
+        signal_scorer: Optional[Any] = None,
     ) -> None:
         self.aggregator = aggregator
         self.tech_analyzer = tech_analyzer
@@ -87,7 +92,12 @@ class TradingLoop:
         self._cycle_classifier = cycle_classifier
         self._multi_tf_analyzer = multi_tf_analyzer
         self._ohlcv_writer = ohlcv_writer
+        # Per-symbol writers and scorers (fix #2)
+        self._ohlcv_writers: dict[str, Any] = ohlcv_writers or {}
+        self._per_symbol_scorers: dict[str, Any] = per_symbol_scorers or {}
         self._regime_refresh_date: str = ""
+        self._current_regime: str | None = None
+        self.signal_scorer = signal_scorer
         # Kill-switch state
         self._consecutive_losses: int = 0
         self._daily_loss_pct: float = 0.0
@@ -98,9 +108,14 @@ class TradingLoop:
     def stop(self) -> None:
         self._stop_event.set()
 
+    async def trigger_immediate_cycle(self) -> None:
+        """Fix #12: Wake the loop and run a cycle immediately, bypassing the normal sleep."""
+        self._webhook_trigger = True
+
     async def run(self) -> None:
         """Run the trading loop until stopped."""
         self.logger.info("trading loop started")
+        self._webhook_trigger: bool = False
         _retry_delay = 30
         try:
             while not self._stop_event.is_set():
@@ -116,7 +131,12 @@ class TradingLoop:
                     continue
                 if self._stop_event.is_set():
                     break
-                await self._sleep(self.settings.bot_interval_seconds)
+                # Fix #12: check for a webhook-triggered immediate cycle before sleeping.
+                if getattr(self, "_webhook_trigger", False):
+                    self._webhook_trigger = False
+                    self.logger.info("Webhook signal received — skipping sleep for immediate cycle")
+                    continue
+                await self._sleep(self.settings.effective_bot_interval())
         except asyncio.CancelledError:
             raise
         finally:
@@ -146,32 +166,42 @@ class TradingLoop:
 
         snapshots = await self._collect_snapshots()
 
-        # B4: Anomaly detection — skip cycle entirely if market is abnormal
+        # B4: Anomaly detection — skip cycle if any symbol shows abnormal conditions
         if self._anomaly_detector is not None and snapshots:
-            first_snap = next(iter(snapshots.values()))
             try:
-                if self._anomaly_detector.is_anomaly(first_snap, None):
-                    self.logger.warning("Anomaly detected — skipping cycle %d", self._cycle)
-                    return {"timestamp_iso": timestamp_iso, "halted": True, "halt_reason": "anomaly"}
+                for snap in snapshots.values():
+                    if self._anomaly_detector.is_anomaly(snap, None):
+                        self.logger.warning("Anomaly detected for %s — skipping cycle %d", snap.symbol, self._cycle)
+                        return {"timestamp_iso": timestamp_iso, "halted": True, "halt_reason": "anomaly"}
             except Exception:  # noqa: BLE001
                 self.logger.debug("anomaly_detector failed", exc_info=True)
 
-        # E: Append latest closed candle to OHLCV CSV
-        if self._ohlcv_writer is not None and snapshots:
-            try:
-                first_snap = next(iter(snapshots.values()))
-                self._ohlcv_writer.append(first_snap.candles)
-            except Exception:  # noqa: BLE001
-                self.logger.debug("ohlcv_writer.append failed", exc_info=True)
+        # E: Append latest closed candle to OHLCV CSV for every traded symbol (fix #2)
+        if snapshots:
+            for sym, snap in snapshots.items():
+                writer = self._ohlcv_writers.get(sym.upper()) or self._ohlcv_writer
+                if writer is not None:
+                    try:
+                        writer.append(snap.candles)
+                    except Exception:  # noqa: BLE001
+                        self.logger.debug("ohlcv_writer.append failed for %s", sym, exc_info=True)
 
-        # A4: Refresh macro regime daily and inject into system prompt
+        # A4: Refresh macro regime daily and inject into system prompt.
+        # Also reload KeyLevelDetector cache so S/R levels stay current (fix #4).
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        if self._cycle_classifier is not None and today != self._regime_refresh_date:
-            try:
-                self._refresh_regime()
-                self._regime_refresh_date = today
-            except Exception:  # noqa: BLE001
-                self.logger.debug("regime refresh failed", exc_info=True)
+        if today != self._regime_refresh_date:
+            if self._cycle_classifier is not None:
+                try:
+                    self._refresh_regime()
+                except Exception:  # noqa: BLE001
+                    self.logger.debug("regime refresh failed", exc_info=True)
+            if self._key_level_detector is not None:
+                try:
+                    self._key_level_detector.reload()
+                    self.logger.debug("KeyLevelDetector cache reloaded")
+                except Exception:  # noqa: BLE001
+                    self.logger.debug("key_level_detector.reload failed", exc_info=True)
+            self._regime_refresh_date = today
 
         # Detect positions closed by exchange TP/SL since last cycle.
         await self._reconcile_open_positions()
@@ -180,25 +210,34 @@ class TradingLoop:
         first_price = next(iter(snapshots.values())).price if snapshots else 0.0
         if self.trading_strategy is not None:
             try:
+                # Use the price for the strategy's symbol, not just the first snapshot
+                _strat_sym = getattr(self.trading_strategy, "symbol", None)
+                _strat_price = (
+                    snapshots[_strat_sym].price
+                    if _strat_sym and _strat_sym in snapshots
+                    else first_price
+                )
                 async with self._position_lock:
                     # Capture position PnL before check so we can track loss on close
                     _pre_pos = getattr(self.trading_strategy, "current_position", None)
-                    _pre_pnl_pct = _pre_pos.calculate_pnl(first_price) if _pre_pos else None
+                    _pre_pnl_pct = _pre_pos.calculate_pnl(_strat_price) if _pre_pos else None
                     _pre_quote = _pre_pos.quote_amount if _pre_pos else 0.0
 
-                    close_reason = await self.trading_strategy.check_position(first_price)
+                    close_reason = await self.trading_strategy.check_position(_strat_price)
 
                     # Update kill-switch counters when a position closes
                     if close_reason in ("stop_loss", "trailing_stop", "take_profit", "partial_tp1"):
                         self._update_loss_tracking(close_reason, _pre_pnl_pct, _pre_quote)
+
+                    # Fix #6: keep _open_positions dict in sync with TradingStrategy state
+                    self._sync_position_from_strategy()
             except Exception:  # noqa: BLE001
                 self.logger.exception("trading_strategy.check_position failed")
 
         choppiness_threshold = getattr(self.settings, "choppiness_threshold", 61.8)
-        rsi_strong_buy  = getattr(self.settings, "signal_rsi_strong_buy", 30.0)
-        rsi_buy         = getattr(self.settings, "signal_rsi_buy", 40.0)
-        rsi_sell        = getattr(self.settings, "signal_rsi_sell", 60.0)
-        rsi_strong_sell = getattr(self.settings, "signal_rsi_strong_sell", 70.0)
+        rsi_strong_buy, rsi_buy, rsi_sell, rsi_strong_sell = (
+            self.settings.effective_rsi_thresholds()
+        )
         analyses = {
             symbol: self.tech_analyzer.analyze(
                 symbol, snapshot, choppiness_threshold,
@@ -207,11 +246,17 @@ class TradingLoop:
             for symbol, snapshot in snapshots.items()
         }
 
-        # Multi-timeframe: fetch 4h candles and compute HTF signals
-        htf_analyses = await self._collect_htf_analyses(snapshots)
+        # Multi-timeframe: fetch 4h candles and compute HTF signals.
+        # Fix #9: only pay the Binance API cost when HTF confirmation is actually enabled.
+        htf_enabled = getattr(self.settings, "htf_confirmation_enabled", False)
+        htf_analyses = await self._collect_htf_analyses(
+            snapshots, choppiness_threshold,
+            rsi_strong_buy, rsi_buy, rsi_sell, rsi_strong_sell,
+        ) if htf_enabled else None
 
         patterns = await self._collect_patterns(snapshots, analyses)
-        rag_context = self._build_rag_context(snapshots, analyses)
+        single_call = getattr(self.settings, "single_symbol_decision", True) and len(snapshots) > 1
+        rag_per_symbol = self._build_rag_context_per_symbol(snapshots, analyses, single_call_mode=single_call)
 
         # Gather optional extra context sections
         position_context: Optional[str] = None
@@ -237,8 +282,16 @@ class TradingLoop:
             try:
                 first_symbol, first_snap = next(iter(snapshots.items()))
                 market_conditions = self.tech_analyzer.get_market_conditions(first_symbol, first_snap)
-                brain_context = self.brain_service.get_brain_context(market_conditions)
-                dynamic_thresholds = self.brain_service.get_dynamic_thresholds(market_conditions)
+                # Filter to only the kwargs accepted by get_context()
+                _brain_keys = {
+                    "trend_direction", "adx", "volatility_level", "rsi_level",
+                    "macd_signal", "volume_state", "bb_position",
+                    "is_weekend", "market_sentiment", "order_book_bias",
+                }
+                brain_context = self.brain_service.get_context(
+                    **{k: v for k, v in market_conditions.items() if k in _brain_keys}
+                )
+                dynamic_thresholds = self.brain_service.get_dynamic_thresholds()
             except Exception:  # noqa: BLE001
                 self.logger.debug("brain_service context failed", exc_info=True)
 
@@ -253,88 +306,103 @@ class TradingLoop:
 
         ml_context = await self._build_ml_context(snapshots, analyses)
 
-        system_prompt, user_message = self.builder.build(
-            snapshots,
-            analyses,
-            patterns,
-            rag_context,
+        # Per-symbol decisions run in parallel — each symbol gets its own focused prompt.
+        decisions = await self._decide_per_symbol(
+            snapshots, analyses, patterns, rag_per_symbol, htf_analyses,
             position_context=position_context,
             memory_context=memory_context,
             brain_context=brain_context,
             dynamic_thresholds=dynamic_thresholds,
             ml_context=ml_context,
         )
-        decision = await self._decide(system_prompt, user_message, htf_analyses)
 
         balance = await self._build_balance_context(snapshots)
-        risk_result = self.risk.validate(decision, balance, self._open_positions)
-        outcome = await self.executor.execute(risk_result.decision, risk_result.dry_run)
-        self.memory.record(outcome)
 
-        # Slippage check: warn if executed price deviates significantly from decision price
-        self._check_slippage(outcome, snapshots)
+        # Execute decisions sequentially (shared USDT balance).
+        outcomes: dict[str, tuple[Any, Any]] = {}
+        last_outcome = None
+        for symbol, decision in decisions.items():
+            risk_result = self.risk.validate(decision, balance, self._open_positions)
+            outcome = await self.executor.execute(risk_result.decision, risk_result.dry_run)
+            self.memory.record(outcome)
+            self._check_slippage(outcome, snapshots)
+            if not outcome.dry_run and outcome.order_id:
+                await self._update_open_positions(outcome)
+                # Deduct the executed notional from the local balance so the
+                # next symbol's risk validation sees the reduced USDT instead
+                # of the stale pre-cycle snapshot.
+                _exec_price = outcome.executed_price or balance.get("prices", {}).get(symbol, 0.0)
+                if _exec_price > 0 and isinstance(balance.get("USDT"), dict):
+                    _notional = outcome.decision.quantity * _exec_price
+                    balance["USDT"]["free"] = max(0.0, balance["USDT"]["free"] - _notional)
+            outcomes[symbol] = (outcome, risk_result)
+            last_outcome = outcome
 
-        # Keep _open_positions in sync so subsequent cycles see the position.
-        if not outcome.dry_run and outcome.order_id:
-            await self._update_open_positions(outcome)
+            self.persistence.append_trade(outcome, timestamp_iso)
+            self.persistence.append_cycle_log(
+                timestamp_iso=timestamp_iso,
+                cycle=self._cycle,
+                symbol=symbol,
+                analysis=analyses.get(symbol) or next(iter(analyses.values())),
+                patterns=patterns.get(symbol) or next(iter(patterns.values())),
+                rag_docs_retrieved=rag_per_symbol.get(symbol, "").count("["),
+                llm_decision=outcome.decision.action.value,
+                llm_usage=getattr(self.llm, "last_usage", None),
+                llm_prompt=getattr(self.llm, "last_prompt", None),
+                llm_raw_response=getattr(self.llm, "last_raw_response", None),
+                decision_source=outcome.decision.source,
+                decision_reasoning=outcome.decision.reasoning,
+                llm_error=getattr(self.llm, "last_error", None),
+                risk_outcome=risk_result.status,
+                order_id=outcome.order_id,
+                dry_run=outcome.dry_run,
+            )
 
-        chosen_symbol = outcome.decision.symbol
-        chosen_analysis = analyses.get(chosen_symbol) or next(iter(analyses.values()))
-        chosen_patterns = patterns.get(chosen_symbol) or next(iter(patterns.values()))
-        rag_docs_retrieved = rag_context.count("[")
-        self.persistence.append_trade(outcome, timestamp_iso)
-        self.persistence.append_cycle_log(
-            timestamp_iso=timestamp_iso,
-            cycle=self._cycle,
-            symbol=chosen_symbol,
-            analysis=chosen_analysis,
-            patterns=chosen_patterns,
-            rag_docs_retrieved=rag_docs_retrieved,
-            llm_decision=outcome.decision.action.value,
-            llm_usage=getattr(self.llm, "last_usage", None),
-            llm_prompt=getattr(self.llm, "last_prompt", None),
-            llm_raw_response=getattr(self.llm, "last_raw_response", None),
-            decision_source=outcome.decision.source,
-            decision_reasoning=outcome.decision.reasoning,
-            llm_error=getattr(self.llm, "last_error", None),
-            risk_outcome=risk_result.status,
-            order_id=outcome.order_id,
-            dry_run=outcome.dry_run,
+        symbol_signals = [(s.replace("USDT", ""), analyses[s].signal.value) for s in analyses]
+        # Use the most significant non-HOLD decision for the console summary, else last.
+        summary_outcome = next(
+            (o for o, _ in outcomes.values() if o.decision.action.value != "HOLD"),
+            last_outcome,
         )
-        symbol_signals = [(symbol.replace("USDT", ""), analysis.signal.value) for symbol, analysis in analyses.items()]
         self.console_notifier.notify_cycle(
             cycle=self._cycle,
             timestamp_iso=timestamp_iso,
             symbol_signals=symbol_signals,
-            final_decision=outcome.decision.action.value,
+            final_decision=summary_outcome.decision.action.value if summary_outcome else "HOLD",
         )
+        decisions_log = " | ".join(
+            f"{sym}={o.decision.action.value}({r.status})"
+            for sym, (o, r) in outcomes.items()
+        )
+        dry_run_flag = last_outcome.dry_run if last_outcome else self.settings.bot_dry_run
         self.logger_notifier.notify(
-            f"cycle={self._cycle} symbol={chosen_symbol} decision={outcome.decision.action.value} "
-            f"risk={risk_result.status} dry_run={outcome.dry_run}"
+            f"cycle={self._cycle} {decisions_log} dry_run={dry_run_flag}"
         )
 
-        # Optional Discord notification
+        # Optional Discord notification — send for any non-HOLD decision.
         if self.discord_notifier is not None:
-            try:
-                await self.discord_notifier.send_trading_decision(
-                    symbol=chosen_symbol,
-                    decision=outcome.decision.action.value,
-                    price=first_price,
-                    reasoning=outcome.decision.reasoning,
-                    dry_run=outcome.dry_run,
-                )
-            except Exception:  # noqa: BLE001
-                self.logger.debug("discord_notifier.send_trading_decision failed", exc_info=True)
+            for symbol, (outcome, _) in outcomes.items():
+                if outcome.decision.action.value == "HOLD":
+                    continue
+                try:
+                    await self.discord_notifier.send_trading_decision(
+                        symbol=symbol,
+                        decision=outcome.decision.action.value,
+                        price=snapshots[symbol].price if symbol in snapshots else first_price,
+                        reasoning=outcome.decision.reasoning,
+                        dry_run=outcome.dry_run,
+                    )
+                except Exception:  # noqa: BLE001
+                    self.logger.debug("discord_notifier.send_trading_decision failed", exc_info=True)
 
         return {
             "timestamp_iso": timestamp_iso,
             "snapshots": snapshots,
             "analyses": analyses,
             "patterns": patterns,
-            "rag_context": rag_context,
-            "decision": decision,
-            "risk_result": risk_result,
-            "outcome": outcome,
+            "rag_per_symbol": rag_per_symbol,
+            "decisions": decisions,
+            "outcomes": outcomes,
         }
 
     async def _collect_snapshots(self) -> dict[str, Any]:
@@ -354,7 +422,10 @@ class TradingLoop:
         feed = getattr(self.aggregator, "feed", None)
 
         for symbol, snapshot in snapshots.items():
-            pattern_result = self.pattern_analyzer.analyze(symbol, snapshot.candles)
+            pattern_result = self.pattern_analyzer.analyze(
+                symbol, snapshot.candles,
+                timeframe=getattr(self.settings, "timeframe", "1h"),
+            )
             if self.settings.model_supports_vision:
                 chart_candles = snapshot.candles
                 if feed is not None and chart_tf != primary_tf:
@@ -366,20 +437,196 @@ class TradingLoop:
             results[symbol] = pattern_result
         return results
 
-    def _build_rag_context(self, snapshots: dict[str, Any], analyses: dict[str, Any]) -> str:
-        sections = [
-            self.retriever.retrieve(snapshots[symbol], analyses[symbol])
-            for symbol in snapshots
-        ]
-        combined = "\n\n".join(section for section in sections if section and section != "=== NO CONTEXT AVAILABLE ===")
-        return combined or "=== NO CONTEXT AVAILABLE ==="
+    def _build_rag_context_per_symbol(
+        self,
+        snapshots: dict[str, Any],
+        analyses: dict[str, Any],
+        *,
+        single_call_mode: bool = False,
+    ) -> dict[str, str]:
+        """Build per-symbol RAG context strings.
+
+        When ``single_call_mode`` is True the macro section (global market data)
+        is omitted from each symbol's block so it can be attached once to the
+        combined prompt by ``_decide_all_symbols_single_call``.  This prevents
+        sending the same macro paragraphs N times — one for each symbol.
+        """
+        result: dict[str, str] = {}
+        for symbol in snapshots:
+            section = self.retriever.retrieve(
+                snapshots[symbol],
+                analyses[symbol],
+                include_macro=not single_call_mode,
+            )
+            result[symbol] = section if section and section != "=== NO CONTEXT AVAILABLE ===" else "=== NO CONTEXT AVAILABLE ==="
+        return result
+
+    async def _decide_per_symbol(
+        self,
+        snapshots: dict[str, Any],
+        analyses: dict[str, Any],
+        patterns: dict[str, Any],
+        rag_per_symbol: dict[str, str],
+        htf_analyses: dict[str, Any] | None,
+        *,
+        position_context: Optional[str] = None,
+        memory_context: Optional[str] = None,
+        brain_context: Optional[str] = None,
+        dynamic_thresholds: Optional[dict[str, Any]] = None,
+        ml_context: Optional[str] = None,
+    ) -> dict[str, TradeDecision]:
+        """Run LLM decisions for all symbols.
+
+        Fix #8: when ``single_symbol_decision=True`` (SINGLE_SYMBOL_DECISION=true),
+        all symbols are evaluated in a *single* LLM call — the model sees cross-asset
+        context and picks the best opportunity, halving API cost for 2-symbol setups.
+        When False (default), one call per symbol runs in parallel (legacy behaviour).
+        """
+        # Signal scorer path — deterministic, no LLM call
+        if self.signal_scorer is not None:
+            decisions: dict[str, TradeDecision] = {}
+            for symbol in snapshots:
+                # Determine current position direction for this symbol
+                pos_dir: str | None = None
+                if self.trading_strategy and getattr(self.trading_strategy, "symbol", None) == symbol:
+                    strat_pos = getattr(self.trading_strategy, "current_position", None)
+                    if strat_pos:
+                        pos_dir = strat_pos.direction
+                elif symbol in self._open_positions:
+                    raw_dir = self._open_positions[symbol].get("direction", "")
+                    pos_dir = "LONG" if raw_dir == "BUY" else ("SHORT" if raw_dir == "SELL" else None)
+
+                htf_sig = None
+                if htf_analyses:
+                    htf_a = htf_analyses.get(symbol)
+                    if htf_a is not None:
+                        htf_sig = htf_a.signal
+
+                decisions[symbol] = self.signal_scorer.decide(
+                    symbol,
+                    snapshots[symbol],
+                    analyses[symbol],
+                    regime=self._current_regime,
+                    htf_signal=htf_sig,
+                    position_direction=pos_dir,
+                )
+            return decisions
+
+        # LLM paths below
+        if getattr(self.settings, "single_symbol_decision", False) and len(snapshots) > 1:
+            return await self._decide_all_symbols_single_call(
+                snapshots, analyses, patterns, rag_per_symbol, htf_analyses,
+                position_context=position_context,
+                memory_context=memory_context,
+                brain_context=brain_context,
+                dynamic_thresholds=dynamic_thresholds,
+                ml_context=ml_context,
+            )
+
+        async def _decide_one(symbol: str) -> TradeDecision:
+            snap = {symbol: snapshots[symbol]}
+            ana = {symbol: analyses[symbol]}
+            pat = {symbol: patterns[symbol]}
+            rag = rag_per_symbol.get(symbol, "=== NO CONTEXT AVAILABLE ===")
+            # Per-symbol HTF thresholds (filter to this symbol only)
+            sym_htf = None
+            if htf_analyses:
+                htf_val = htf_analyses.get(symbol)
+                sym_htf = {symbol: htf_val} if htf_val is not None else {}
+            system_prompt, user_message = self.builder.build(
+                snap, ana, pat, rag,
+                position_context=position_context,
+                memory_context=memory_context,
+                brain_context=brain_context,
+                dynamic_thresholds=dynamic_thresholds,
+                ml_context=ml_context,
+            )
+            decision = await self._decide(system_prompt, user_message, sym_htf)
+            # Enforce correct symbol — LLM may omit it and the parser defaults to the primary symbol.
+            if decision.symbol != symbol:
+                decision = TradeDecision(
+                    symbol=symbol,
+                    action=decision.action,
+                    quantity=decision.quantity,
+                    order_type=decision.order_type,
+                    price=decision.price,
+                    reasoning=decision.reasoning,
+                    confidence=decision.confidence,
+                    timestamp=decision.timestamp,
+                    source=decision.source,
+                )
+            return decision
+
+        results = await asyncio.gather(*[_decide_one(sym) for sym in snapshots])
+        return dict(zip(snapshots.keys(), results))
+
+    async def _decide_all_symbols_single_call(
+        self,
+        snapshots: dict[str, Any],
+        analyses: dict[str, Any],
+        patterns: dict[str, Any],
+        rag_per_symbol: dict[str, str],
+        htf_analyses: dict[str, Any] | None,
+        *,
+        position_context: Optional[str] = None,
+        memory_context: Optional[str] = None,
+        brain_context: Optional[str] = None,
+        dynamic_thresholds: Optional[dict[str, Any]] = None,
+        ml_context: Optional[str] = None,
+    ) -> dict[str, TradeDecision]:
+        """Fix #8: single LLM call for all symbols — pick the best opportunity.
+
+        Per-symbol RAG blocks contain news + trade memory for each symbol.
+        Macro context (global market data) is fetched once and appended at the
+        end so it is not repeated N times in the combined prompt.
+        The returned dict maps every symbol to either the chosen action or HOLD.
+        """
+        # Per-symbol sections (news + memory, no macro — see _build_rag_context_per_symbol)
+        combined_rag = "\n\n".join(
+            f"--- {sym} ---\n{rag}"
+            for sym, rag in rag_per_symbol.items()
+            if rag and rag != "=== NO CONTEXT AVAILABLE ==="
+        ) or "=== NO CONTEXT AVAILABLE ==="
+
+        # Append global macro context once instead of repeating it per symbol
+        shared_macro = self.retriever.retrieve_macro("global macro crypto market conditions")
+        if shared_macro:
+            combined_rag = f"{combined_rag}\n\n{shared_macro}"
+
+        system_prompt, user_message = self.builder.build(
+            snapshots, analyses, patterns, combined_rag,
+            position_context=position_context,
+            memory_context=memory_context,
+            brain_context=brain_context,
+            dynamic_thresholds=dynamic_thresholds,
+            ml_context=ml_context,
+        )
+
+        decision = await self._decide(system_prompt, user_message, htf_analyses)
+
+        # The LLM chose one symbol — all others default to HOLD
+        decisions: dict[str, TradeDecision] = {}
+        for sym in snapshots:
+            if sym == decision.symbol:
+                decisions[sym] = decision
+            else:
+                decisions[sym] = TradeDecision(
+                    symbol=sym,
+                    action=Action.HOLD,
+                    reasoning=f"single_call:not_chosen (chose {decision.symbol})",
+                    source=decision.source,
+                )
+        return decisions
+
 
     async def _decide(self, system_prompt: str, user_message: str, htf_analyses: dict[str, Any] | None = None) -> TradeDecision:
         decision = await self.llm.decide(system_prompt, user_message)
         if decision.action == Action.HOLD:
             return decision
-        if decision.symbol not in {"BTCUSDT", "ETHUSDT"}:
-            return TradeDecision(symbol="BTCUSDT", action=Action.HOLD, reasoning="invalid_symbol", source="fallback_hold")
+        valid_symbols = set(getattr(self.settings, "trading_symbols", ["BTCUSDT", "ETHUSDT"]))
+        if decision.symbol not in valid_symbols:
+            fallback = next(iter(valid_symbols))
+            return TradeDecision(symbol=fallback, action=Action.HOLD, reasoning="invalid_symbol", source="fallback_hold")
 
         # HTF confirmation gate: block entries when higher-timeframe trend disagrees
         htf_enabled = getattr(self.settings, "htf_confirmation_enabled", False)
@@ -524,7 +771,15 @@ class TradingLoop:
                 del self._open_positions[sym]
                 await self.persistence.async_save_position(sym, None)
 
-    async def _collect_htf_analyses(self, snapshots: dict[str, Any]) -> dict[str, Any]:
+    async def _collect_htf_analyses(
+        self,
+        snapshots: dict[str, Any],
+        choppiness_threshold: float = 61.8,
+        rsi_strong_buy: float = 30.0,
+        rsi_buy: float = 40.0,
+        rsi_sell: float = 60.0,
+        rsi_strong_sell: float = 70.0,
+    ) -> dict[str, Any]:
         """Fetch higher-timeframe candles and compute HTF signals for each symbol.
 
         Returns an empty dict if the feed doesn't support it or all requests fail.
@@ -553,8 +808,10 @@ class TradingLoop:
                     funding_rate=snapshot.funding_rate,
                     open_interest=snapshot.open_interest,
                 )
-                choppiness_threshold = getattr(self.settings, "choppiness_threshold", 61.8)
-                results[symbol] = self.tech_analyzer.analyze(symbol, htf_snap, choppiness_threshold)
+                results[symbol] = self.tech_analyzer.analyze(
+                    symbol, htf_snap, choppiness_threshold,
+                    rsi_strong_buy, rsi_buy, rsi_sell, rsi_strong_sell,
+                )
             except Exception:  # noqa: BLE001
                 self.logger.debug("HTF analysis failed for %s", symbol, exc_info=True)
         return results
@@ -564,17 +821,20 @@ class TradingLoop:
         parts: list[str] = []
         first_symbol = next(iter(snapshots)) if snapshots else None
 
-        # A1: Historical percentiles
-        if self._percentile_scorer is not None and first_symbol:
+        # A1: Historical percentiles — use per-symbol scorer when available (fix #2)
+        for sym, snap in snapshots.items():
+            scorer = self._per_symbol_scorers.get(sym.upper()) or self._percentile_scorer
+            if scorer is None:
+                continue
             try:
-                snap = snapshots[first_symbol]
-                analysis = analyses.get(first_symbol)
+                analysis = analyses.get(sym)
                 if analysis is not None:
-                    pct_text = self._percentile_scorer.score(analysis.indicators, snap.price)
+                    pct_text = scorer.score(analysis.indicators, snap.price)
                     if pct_text:
-                        parts.append(pct_text)
+                        header = f"### {sym}" if len(snapshots) > 1 else ""
+                        parts.append(f"{header}\n{pct_text}".strip())
             except Exception:  # noqa: BLE001
-                self.logger.debug("percentile_scorer failed", exc_info=True)
+                self.logger.debug("percentile_scorer failed for %s", sym, exc_info=True)
 
         # A2: Multi-timeframe alignment
         if self._multi_tf_analyzer is not None and first_symbol:
@@ -586,27 +846,29 @@ class TradingLoop:
             except Exception:  # noqa: BLE001
                 self.logger.debug("multi_tf_analyzer failed", exc_info=True)
 
-        # A3: Key S/R levels
-        if self._key_level_detector is not None and first_symbol:
-            try:
-                price = snapshots[first_symbol].price
-                levels_text = self._key_level_detector.format_context(price)
-                if levels_text:
-                    parts.append(levels_text)
-            except Exception:  # noqa: BLE001
-                self.logger.debug("key_level_detector failed", exc_info=True)
+        # A3: Key S/R levels — per symbol
+        if self._key_level_detector is not None:
+            for sym, snap in snapshots.items():
+                try:
+                    levels_text = self._key_level_detector.format_context(snap.price, symbol=sym)
+                    if levels_text:
+                        parts.append(f"### {sym}\n{levels_text}")
+                except Exception:  # noqa: BLE001
+                    self.logger.debug("key_level_detector failed for %s", sym, exc_info=True)
 
-        # B2: XGBoost direction signal
-        if self._direction_classifier is not None and first_symbol:
-            try:
-                analysis = analyses.get(first_symbol)
-                if analysis is not None:
-                    price = snapshots[first_symbol].price if first_symbol in snapshots else None
-                    dir_text = self._direction_classifier.format_context(analysis.indicators, price)
-                    if dir_text:
-                        parts.append(dir_text)
-            except Exception:  # noqa: BLE001
-                self.logger.debug("direction_classifier failed", exc_info=True)
+        # B2: XGBoost direction signal — per symbol
+        if self._direction_classifier is not None:
+            for sym, snap in snapshots.items():
+                try:
+                    analysis = analyses.get(sym)
+                    if analysis is not None:
+                        dir_text = self._direction_classifier.format_context(
+                            analysis.indicators, snap.price, symbol=sym
+                        )
+                        if dir_text:
+                            parts.append(f"### {sym}\n{dir_text}")
+                except Exception:  # noqa: BLE001
+                    self.logger.debug("direction_classifier failed for %s", sym, exc_info=True)
 
         return "\n\n".join(parts) if parts else None
 
@@ -663,8 +925,9 @@ class TradingLoop:
             result = self._cycle_classifier.predict(features)
             if result is not None:
                 regime, confidence = result
+                self._current_regime = regime
                 suffix = self._cycle_classifier.regime_system_prompt_suffix(regime, confidence)
-                self.builder._regime_suffix = suffix
+                self.builder.set_regime_suffix(suffix)
                 self.logger.info("Macro regime updated: %s (%.0f%%)", regime, confidence * 100)
         except Exception as exc:  # noqa: BLE001
             self.logger.debug("_refresh_regime failed: %s", exc)
@@ -876,3 +1139,37 @@ class TradingLoop:
                 f"OPEN {direction} {sym}: qty={size:.6f} entry={entry_str} SL={sl_str} TP={tp_str}"
             )
         return "\n".join(lines) if lines else "CURRENT POSITION: None"
+
+    def _sync_position_from_strategy(self) -> None:
+        """Fix #6: Keep _open_positions dict in sync with TradingStrategy.current_position.
+
+        TradingStrategy is the authoritative source of truth for the rich position
+        lifecycle (trailing stop, partial TP, etc.). After every position lifecycle
+        check we mirror its state back into the simple _open_positions dict so the
+        position monitor and executor-path code always sees a consistent picture.
+        """
+        if self.trading_strategy is None:
+            return
+        pos = getattr(self.trading_strategy, "current_position", None)
+        sym = getattr(self.trading_strategy, "symbol", None)
+        if sym is None:
+            return
+
+        if pos is None:
+            # Strategy says no open position — remove it from the dict if present
+            if sym in self._open_positions:
+                del self._open_positions[sym]
+                self.logger.debug("_sync_position_from_strategy: removed stale dict entry for %s", sym)
+        else:
+            # Mirror key fields so the monitor path and context formatter stay accurate
+            direction_val = "BUY" if pos.direction == "LONG" else "SELL"
+            existing = self._open_positions.get(sym, {})
+            self._open_positions[sym] = {
+                **existing,
+                "direction": direction_val,
+                "symbol": sym,
+                "size": pos.size,
+                "entry_price": pos.entry_price,
+                "sl_price": pos.trailing_stop_price or pos.stop_loss,
+                "tp_price": pos.take_profit,
+            }

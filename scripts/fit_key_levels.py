@@ -25,11 +25,19 @@ from sklearn.cluster import DBSCAN
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--csv",      default="data/btcusdt_1d.csv")
-    parser.add_argument("--out",      default="models/key_levels_cache.json")
+    parser.add_argument("--symbol",   default=None, help="Symbol e.g. btcusdt — prefixes output filename")
+    parser.add_argument("--csv",      default=None)
+    parser.add_argument("--out",      default=None)
     parser.add_argument("--lookback", type=int, default=365, help="Days of history to use")
     parser.add_argument("--eps-pct",  type=float, default=0.003, help="Cluster radius as fraction of price")
     args = parser.parse_args()
+
+    sym = args.symbol.lower() if args.symbol else "btcusdt"
+    sym_prefix = f"{sym}_" if args.symbol else ""
+    if args.csv is None:
+        args.csv = f"data/ohlcv/{sym}_1d.csv"
+    if args.out is None:
+        args.out = f"models/key_levels_{sym_prefix}cache.json"
 
     print(f"Loading {args.csv} …")
     df = pd.read_csv(args.csv)

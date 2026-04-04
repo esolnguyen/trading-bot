@@ -9,6 +9,7 @@ from src.shared.data_utils import get_indicator_value
 
 try:
     import numpy as np
+
     _HAS_NUMPY = True
 except ImportError:
     np = None  # type: ignore[assignment]
@@ -16,6 +17,7 @@ except ImportError:
 
 try:
     import pandas as pd
+
     _HAS_PANDAS = True
 except ImportError:
     pd = None  # type: ignore[assignment]
@@ -35,7 +37,9 @@ CLEAN_NUMBER_CHARS = ("$", "€", "£", "%", ",")
 def timestamps_from_ms_array(timestamps_ms: Any) -> List[datetime]:
     """Convert array of millisecond timestamps to list of datetime objects."""
     if _HAS_PANDAS and _HAS_NUMPY:
-        return pd.to_datetime(timestamps_ms, unit="ms", utc=True).to_pydatetime().tolist()
+        return (
+            pd.to_datetime(timestamps_ms, unit="ms", utc=True).to_pydatetime().tolist()
+        )
     return [datetime.utcfromtimestamp(ts / 1000) for ts in timestamps_ms]
 
 
@@ -83,7 +87,9 @@ class FormatUtils:
             return f"{val:.{eff}f}"
         return f"{val:.2f}"
 
-    def fmt_ta(self, td: dict, key: str, precision: int | None = None, default: str = "N/A") -> str:
+    def fmt_ta(
+        self, td: dict, key: str, precision: int | None = None, default: str = "N/A"
+    ) -> str:
         """Format a technical-analysis indicator value from a data dict."""
         eff = precision if precision is not None else self.default_precision
         val = get_indicator_value(td, key)
@@ -103,8 +109,9 @@ class FormatUtils:
     def format_current_time(self, format_str: str = "%Y-%m-%d %H:%M:%S") -> str:
         return datetime.now().strftime(format_str)
 
-    def format_timestamp_seconds(self, timestamp_sec: float,
-                                  format_str: str = "%Y-%m-%d") -> str:
+    def format_timestamp_seconds(
+        self, timestamp_sec: float, format_str: str = "%Y-%m-%d"
+    ) -> str:
         try:
             return datetime.fromtimestamp(timestamp_sec).strftime(format_str)
         except (ValueError, TypeError, OSError):
