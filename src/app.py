@@ -455,8 +455,13 @@ async def main(
 
 def run() -> None:
     """Run the app and surface settings failures clearly."""
-    # Determine log level before loading full settings (avoid double-load)
+    # Must be set before any torch / sentence-transformers import to prevent the
+    # OpenMP duplicate-library segfault on macOS (Apple Silicon + ChromaDB).
     import os as _os
+    _os.environ.setdefault("OMP_NUM_THREADS", "1")
+    _os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+
+    # Determine log level before loading full settings (avoid double-load)
     from dotenv import load_dotenv as _load_dotenv
 
     _load_dotenv(override=False)

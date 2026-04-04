@@ -255,8 +255,11 @@ class TradingLoop:
         ) if htf_enabled else None
 
         patterns = await self._collect_patterns(snapshots, analyses)
-        single_call = getattr(self.settings, "single_symbol_decision", True) and len(snapshots) > 1
-        rag_per_symbol = self._build_rag_context_per_symbol(snapshots, analyses, single_call_mode=single_call)
+        if self.signal_scorer is not None:
+            rag_per_symbol: dict[str, str] = {}
+        else:
+            single_call = getattr(self.settings, "single_symbol_decision", True) and len(snapshots) > 1
+            rag_per_symbol = self._build_rag_context_per_symbol(snapshots, analyses, single_call_mode=single_call)
 
         # Gather optional extra context sections
         position_context: Optional[str] = None

@@ -175,6 +175,31 @@ class RiskManager:
                 dry_run=dry_run,
                 status="blocked",
             )
+
+        # Signal scorer (and any other source) may leave quantity=0 — compute it
+        # from balance using confidence-based sizing so the order has a real size.
+        if decision.quantity <= 0 and decision.action in (Action.BUY, Action.SELL):
+            usdt_avail = self._usdt_balance(balance)
+            confidence_map = {"HIGH": 0.03, "MEDIUM": 0.02, "LOW": 0.01}
+            conf_key = "HIGH" if decision.confidence >= 70 else ("MEDIUM" if decision.confidence >= 40 else "LOW")
+            size_pct = confidence_map[conf_key]
+            computed_qty = (usdt_avail * size_pct) / effective_price
+            self.logger.info(
+                "Auto-sizing %s: balance=%.2f size=%.1f%% price=%.4f → qty=%.8f",
+                decision.symbol, usdt_avail, size_pct * 100, effective_price, computed_qty,
+            )
+            decision = TradeDecision(
+                symbol=decision.symbol,
+                action=decision.action,
+                quantity=computed_qty,
+                order_type=decision.order_type,
+                price=decision.price,
+                reasoning=decision.reasoning,
+                confidence=decision.confidence,
+                timestamp=decision.timestamp,
+                source=decision.source,
+            )
+
         notional = decision.quantity * effective_price
         if notional > self.settings.max_order_usdt:
             clamped_quantity = self.settings.max_order_usdt / effective_price

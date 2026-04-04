@@ -10,6 +10,8 @@ from typing import Any
 from urllib.parse import urlencode
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 
 class BinanceRestError(RuntimeError):
@@ -40,7 +42,7 @@ class BinanceRestClient:
         self.product = product
         self.timeout = timeout
         self.base_url = base_url or self._default_base_url(testnet)
-        self.session = session or requests.Session()
+        self.session = session or self._build_session()
         self.session.headers.update(
             {
                 "Accept": "application/json",
@@ -50,6 +52,21 @@ class BinanceRestClient:
         )
         self._time_offset_ms: int = 0
         self._sync_server_time()
+
+    @staticmethod
+    def _build_session() -> requests.Session:
+        session = requests.Session()
+        retry = Retry(
+            total=3,
+            backoff_factor=0.5,
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=["GET"],
+            raise_on_status=False,
+        )
+        adapter = HTTPAdapter(max_retries=retry)
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
+        return session
 
     def close_connection(self) -> None:
         self.session.close()

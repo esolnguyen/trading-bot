@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import math
+from decimal import Decimal
 from typing import Any, Callable
 
 from src.core.config import Settings
@@ -36,6 +36,7 @@ class Executor:
     async def __aenter__(self) -> "Executor":
         client = await self._ensure_api_client()
         await self._apply_leverage(client)
+        await self._prewarm_step_sizes(client)
         return self
 
     async def __aexit__(self, *_: object) -> None:
@@ -64,6 +65,20 @@ class Executor:
         qty_str = await self._format_quantity(
             decision.symbol, decision.quantity, client
         )
+        if float(qty_str) <= 0:
+            logger.warning(
+                "Skipping order for %s: quantity %.8f rounds to zero (step_size too large)",
+                decision.symbol,
+                decision.quantity,
+            )
+            return TradeOutcome(
+                decision=decision,
+                order_id=None,
+                executed_price=None,
+                pnl_usdt=None,
+                dry_run=True,
+                timestamp=decision.timestamp,
+            )
         params = {
             "symbol": decision.symbol,
             "side": decision.action.value,
@@ -381,36 +396,57 @@ class Executor:
     async def _format_quantity(self, symbol: str, quantity: float, client: Any) -> str:
         """Round quantity down to the exchange's LOT_SIZE stepSize and return as string."""
         step_size = await self._get_step_size(symbol, client)
-        if step_size and "." in step_size:
-            decimals = len(step_size.rstrip("0").split(".")[1])
-        else:
-            decimals = 8
-        step = float(step_size) if step_size else 0.0
-        if step > 0:
-            quantity = math.floor(quantity / step) * step
-        return f"{quantity:.{decimals}f}"
+        if not step_size:
+            # Step size unknown — raise so the order is blocked rather than sent
+            # with wrong precision (which would cause Binance -1111).
+            raise RuntimeError(
+                f"Cannot determine LOT_SIZE stepSize for {symbol} — refusing to place order"
+            )
+        step = Decimal(step_size)
+        qty = Decimal(str(quantity))
+        # Floor to the nearest step using exact Decimal arithmetic (avoids float
+        # imprecision, e.g. 0.07/0.01 == 6.9999... in IEEE 754).
+        rounded = (qty // step) * step
+        # Number of decimal places == abs(exponent of normalised step)
+        decimals = max(0, -step.normalize().as_tuple().exponent)
+        return f"{rounded:.{decimals}f}"
 
     async def _get_step_size(self, symbol: str, client: Any) -> str:
         """Fetch and cache the LOT_SIZE stepSize for a symbol."""
         if symbol in self._step_size_cache:
             return self._step_size_cache[symbol]
-        try:
-            info = await asyncio.to_thread(client.get_exchange_info, symbol)
-            symbols = info.get("symbols") or []
-            filters = symbols[0].get("filters", []) if symbols else []
-            for f in filters:
-                if f.get("filterType") == "LOT_SIZE":
-                    step = f.get("stepSize", "")
-                    self._step_size_cache[symbol] = step
-                    logger.debug("Cached stepSize=%s for %s", step, symbol)
-                    return step
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "Could not fetch stepSize for %s: %s — using 8 decimal places",
-                symbol,
-                exc,
-            )
+        for attempt in range(3):
+            try:
+                info = await asyncio.to_thread(client.get_exchange_info, symbol)
+                symbols = info.get("symbols") or []
+                filters = symbols[0].get("filters", []) if symbols else []
+                for f in filters:
+                    if f.get("filterType") == "LOT_SIZE":
+                        step = f.get("stepSize", "")
+                        self._step_size_cache[symbol] = step
+                        logger.debug("Cached stepSize=%s for %s", step, symbol)
+                        return step
+                break  # got a response but no LOT_SIZE filter — don't retry
+            except Exception as exc:  # noqa: BLE001
+                if attempt < 2:
+                    await asyncio.sleep(1.0)
+                else:
+                    logger.warning(
+                        "Could not fetch stepSize for %s after 3 attempts: %s",
+                        symbol,
+                        exc,
+                    )
         return ""
+
+    async def _prewarm_step_sizes(self, client: Any) -> None:
+        """Fetch and cache LOT_SIZE stepSize for all configured symbols at startup."""
+        symbols = getattr(self.settings, "trading_symbols", [])
+        for symbol in symbols:
+            step = await self._get_step_size(symbol, client)
+            if step:
+                logger.info("Pre-warmed stepSize=%s for %s", step, symbol)
+            else:
+                logger.warning("Could not pre-warm stepSize for %s — orders will be blocked", symbol)
 
     async def _apply_leverage(self, client: Any) -> None:
         """Set configured leverage on all trading symbols (futures only)."""

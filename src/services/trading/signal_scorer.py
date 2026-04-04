@@ -103,6 +103,9 @@ class SignalScorer:
         }
         raw_score = sum(components[k] * weights[k] for k in components)
 
+        comp_str = " ".join(f"{k}={v:+.3f}(w={weights[k]})" for k, v in components.items())
+        logger.info("[scorer] %s raw=%.4f components: %s", symbol, raw_score, comp_str)
+
         # --- Multipliers ---
         tags: list[str] = []
 
@@ -123,6 +126,14 @@ class SignalScorer:
         fr = getattr(snapshot, "funding_rate", None)
         if fr is not None:
             raw_score = self._apply_funding(raw_score, fr, tags)
+
+        logger.info(
+            "[scorer] %s final=%.4f threshold=%.2f tags=%s → %s",
+            symbol, raw_score, s.scoring_entry_threshold,
+            tags or "none",
+            "BUY" if raw_score >= s.scoring_entry_threshold else
+            ("SELL" if raw_score <= -s.scoring_entry_threshold else "HOLD"),
+        )
 
         # --- Outcome predictor gate ---
         if self._outcome_predictor is not None:
