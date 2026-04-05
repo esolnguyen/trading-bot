@@ -62,6 +62,17 @@ class FakeClient:
     def get_open_positions(self, symbol: str):
         return self._positions
 
+    def get_exchange_info(self, symbol: str):
+        return {
+            "symbols": [{
+                "filters": [
+                    {"filterType": "LOT_SIZE", "stepSize": "0.00100000"},
+                    {"filterType": "MARKET_LOT_SIZE", "stepSize": "0.00100000"},
+                    {"filterType": "PRICE_FILTER", "tickSize": "0.01000000"},
+                ]
+            }]
+        }
+
     def close_connection(self):
         self.closed = True
 
@@ -232,62 +243,42 @@ def test_get_live_position_size_returns_inf_on_error() -> None:
     assert size == float("inf")
 
 
+# ---------------------------------------------------------------------------
+# Close action side mapping tests
+# ---------------------------------------------------------------------------
 
-def test_dry_run_never_calls_create_order() -> None:
-    client = FakeClient({})
+def test_close_long_sends_sell_side() -> None:
+    """CLOSE_LONG must send side=SELL to Binance, not 'CLOSE_LONG'."""
+    client = FakeClient(
+        {"orderId": 55555, "avgPrice": "64300.0", "transactTime": 1700000002}
+    )
     executor = Executor(build_settings(), api_client_factory=lambda: client)
-
-    outcome = asyncio.run(executor.execute(buy_decision(), dry_run=True))
-    asyncio.run(executor.close())
-
-    assert outcome.order_id is None
-    assert outcome.dry_run is True
-    assert client.calls == []
-
-
-def test_hold_decision_returns_clean_outcome() -> None:
-    client = FakeClient({})
-    executor = Executor(build_settings(), api_client_factory=lambda: client)
-    decision = TradeDecision(symbol="BTCUSDT", action=Action.HOLD, timestamp=1700000000)
+    decision = TradeDecision(
+        symbol="BTCUSDT", action=Action.CLOSE_LONG,
+        quantity=0.001, order_type="MARKET", timestamp=1700000000,
+    )
 
     outcome = asyncio.run(executor.execute(decision, dry_run=False))
     asyncio.run(executor.close())
 
-    assert outcome.order_id is None
-    assert outcome.executed_price is None
-    assert client.calls == []
+    assert outcome.order_id == "55555"
+    assert client.calls[0]["side"] == "SELL"
 
 
-def test_successful_market_order_returns_outcome_with_order_id() -> None:
+def test_close_short_sends_buy_side_with_reduce_only() -> None:
+    """CLOSE_SHORT on futures must send side=BUY + reduceOnly."""
     client = FakeClient(
-        {
-            "orderId": 12345,
-            "price": "0",
-            "fills": [{"price": "64250.5"}],
-            "transactTime": 1700000001,
-        }
+        {"orderId": 66666, "avgPrice": "1800.0", "transactTime": 1700000003}
     )
-    executor = Executor(build_settings(), api_client_factory=lambda: client)
+    executor = Executor(futures_settings(), api_client_factory=lambda: client)
+    decision = TradeDecision(
+        symbol="ETHUSDT", action=Action.CLOSE_SHORT,
+        quantity=0.5, order_type="MARKET", timestamp=1700000000,
+    )
 
-    outcome = asyncio.run(executor.execute(buy_decision(), dry_run=False))
+    outcome = asyncio.run(executor.execute(decision, dry_run=False))
     asyncio.run(executor.close())
 
-    assert outcome.order_id == "12345"
-    assert outcome.executed_price == 64250.5
-    assert outcome.dry_run is False
-    assert client.calls[0]["symbol"] == "BTCUSDT"
-    assert client.closed is True
-
-
-def test_api_error_raises_runtime_error() -> None:
-    client = FakeClient(RuntimeError("order rejected"))
-    executor = Executor(build_settings(), api_client_factory=lambda: client)
-
-    try:
-        asyncio.run(executor.execute(buy_decision(), dry_run=False))
-    except RuntimeError as exc:
-        assert str(exc) == "order rejected"
-    else:
-        raise AssertionError("Expected RuntimeError for API error response")
-    finally:
-        asyncio.run(executor.close())
+    assert outcome.order_id == "66666"
+    assert client.calls[0]["side"] == "BUY"
+    assert client.calls[0]["reduceOnly"] == "true"

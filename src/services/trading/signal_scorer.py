@@ -77,8 +77,8 @@ class SignalScorer:
         # 1. Technical signal
         components["signal"] = _SIGNAL_SCORES.get(analysis.signal, 0.0)
 
-        # 2. XGBoost direction probability
-        components["direction"] = self._score_direction(indicators, price, symbol)
+        # 2. XGBoost direction probability (None = no model available)
+        direction_score = self._score_direction(indicators, price, symbol)
 
         # 3. Trend strength (ADX + EMA alignment)
         components["trend"] = self._score_trend(indicators, price)
@@ -93,18 +93,37 @@ class SignalScorer:
         components["key_levels"] = self._score_key_levels(price, symbol)
 
         # --- Weighted composite ---
+        # When the direction classifier is unavailable, redistribute its weight
+        # proportionally across the remaining components so no score capacity
+        # is wasted on a dead 0.0 input.
         weights = {
             "signal": s.scoring_w_signal,
-            "direction": s.scoring_w_direction,
             "trend": s.scoring_w_trend,
             "momentum": s.scoring_w_momentum,
             "volume": s.scoring_w_volume,
             "key_levels": s.scoring_w_key_levels,
         }
+        if direction_score is not None:
+            components["direction"] = direction_score
+            weights["direction"] = s.scoring_w_direction
+        else:
+            # Redistribute direction weight proportionally to active components
+            active_total = sum(weights.values())
+            if active_total > 0:
+                scale = (active_total + s.scoring_w_direction) / active_total
+                weights = {k: v * scale for k, v in weights.items()}
+            logger.debug(
+                "[scorer] %s direction classifier unavailable — redistributed %.0f%% weight",
+                symbol, s.scoring_w_direction * 100,
+            )
+
         raw_score = sum(components[k] * weights[k] for k in components)
 
-        comp_str = " ".join(f"{k}={v:+.3f}(w={weights[k]})" for k, v in components.items())
-        logger.info("[scorer] %s raw=%.4f components: %s", symbol, raw_score, comp_str)
+        comp_str = " ".join(f"{k}={v:+.3f}(w={weights[k]:.2f})" for k, v in components.items())
+        logger.info("[scorer] %s raw=%.4f %s components: %s",
+                    symbol, raw_score,
+                    "(no direction model)" if direction_score is None else "",
+                    comp_str)
 
         # --- Multipliers ---
         tags: list[str] = []
@@ -152,12 +171,13 @@ class SignalScorer:
     # Component scorers — each returns a value in [-1, +1]
     # ------------------------------------------------------------------
 
-    def _score_direction(self, indicators: Any, price: float, symbol: str) -> float:
+    def _score_direction(self, indicators: Any, price: float, symbol: str) -> float | None:
+        """Return direction score in [-1, +1], or None if classifier unavailable."""
         if self._direction_classifier is None:
-            return 0.0
+            return None
         prob = self._direction_classifier.predict_proba(indicators, price, symbol)
         if prob is None:
-            return 0.0
+            return None
         return (prob - 0.5) * 2  # [0,1] → [-1,+1]
 
     def _score_trend(self, indicators: Any, price: float) -> float:

@@ -98,6 +98,8 @@ class TradingLoop:
         self._regime_refresh_date: str = ""
         self._current_regime: str | None = None
         self.signal_scorer = signal_scorer
+        # Per-symbol re-entry cooldown: maps symbol → cycle number when position was last closed
+        self._last_close_cycle: dict[str, int] = {}
         # Kill-switch state
         self._consecutive_losses: int = 0
         self._daily_loss_pct: float = 0.0
@@ -117,6 +119,9 @@ class TradingLoop:
         self.logger.info("trading loop started")
         self._webhook_trigger: bool = False
         _retry_delay = 30
+        # Initialize executor: applies leverage and pre-warms exchange filters
+        if hasattr(self.executor, "initialize"):
+            await self.executor.initialize()
         try:
             while not self._stop_event.is_set():
                 try:
@@ -325,8 +330,36 @@ class TradingLoop:
         outcomes: dict[str, tuple[Any, Any]] = {}
         last_outcome = None
         for symbol, decision in decisions.items():
+            # Fill in quantity for close actions from the tracked position
+            if decision.action in (Action.CLOSE_LONG, Action.CLOSE_SHORT, Action.CLOSE) and decision.quantity <= 0:
+                pos = self._open_positions.get(symbol)
+                if pos and pos.get("size", 0) > 0:
+                    decision = TradeDecision(
+                        symbol=decision.symbol,
+                        action=decision.action,
+                        quantity=pos["size"],
+                        order_type=decision.order_type,
+                        price=decision.price,
+                        reasoning=decision.reasoning,
+                        confidence=decision.confidence,
+                        timestamp=decision.timestamp,
+                        source=decision.source,
+                    )
+                    self.logger.info(
+                        "Filled close quantity for %s from tracked position: %.8f",
+                        symbol, pos["size"],
+                    )
             risk_result = self.risk.validate(decision, balance, self._open_positions)
             outcome = await self.executor.execute(risk_result.decision, risk_result.dry_run)
+
+            # Compute PnL for close actions while the position entry data is still available
+            if (
+                not outcome.dry_run
+                and outcome.order_id
+                and outcome.decision.action in (Action.CLOSE_LONG, Action.CLOSE_SHORT, Action.CLOSE)
+            ):
+                outcome = self._attach_pnl(outcome, snapshots)
+
             self.memory.record(outcome)
             self._check_slippage(outcome, snapshots)
             if not outcome.dry_run and outcome.order_id:
@@ -495,7 +528,8 @@ class TradingLoop:
                     strat_pos = getattr(self.trading_strategy, "current_position", None)
                     if strat_pos:
                         pos_dir = strat_pos.direction
-                elif symbol in self._open_positions:
+                # Fallback: always check _open_positions if strategy didn't provide direction
+                if pos_dir is None and symbol in self._open_positions:
                     raw_dir = self._open_positions[symbol].get("direction", "")
                     pos_dir = "LONG" if raw_dir == "BUY" else ("SHORT" if raw_dir == "SELL" else None)
 
@@ -505,7 +539,7 @@ class TradingLoop:
                     if htf_a is not None:
                         htf_sig = htf_a.signal
 
-                decisions[symbol] = self.signal_scorer.decide(
+                decision = self.signal_scorer.decide(
                     symbol,
                     snapshots[symbol],
                     analyses[symbol],
@@ -513,6 +547,30 @@ class TradingLoop:
                     htf_signal=htf_sig,
                     position_direction=pos_dir,
                 )
+
+                # Re-entry cooldown: suppress new entries if the symbol
+                # was closed too recently (prevents rapid-fire flipping).
+                cooldown = getattr(self.settings, "reentry_cooldown_cycles", 3)
+                if (
+                    cooldown > 0
+                    and decision.action in (Action.BUY, Action.SELL)
+                    and pos_dir is None  # only applies to new entries
+                    and symbol in self._last_close_cycle
+                    and (self._cycle - self._last_close_cycle[symbol]) < cooldown
+                ):
+                    remaining = cooldown - (self._cycle - self._last_close_cycle[symbol])
+                    self.logger.info(
+                        "[cooldown] %s suppressed %s — %d cycle(s) remaining before re-entry",
+                        symbol, decision.action.value, remaining,
+                    )
+                    decision = TradeDecision(
+                        symbol=symbol, action=Action.HOLD,
+                        confidence=0.0,
+                        reasoning=f"cooldown ({remaining} cycles left) | {decision.reasoning}",
+                        source="signal_scorer",
+                    )
+
+                decisions[symbol] = decision
             return decisions
 
         # LLM paths below
@@ -673,6 +731,14 @@ class TradingLoop:
         balance_map["prices"] = {symbol: snapshot.price for symbol, snapshot in snapshots.items()}
         return balance_map
 
+    async def _get_snapshot_price(self, symbol: str) -> float:
+        """Fetch the latest price for a symbol from the aggregator."""
+        try:
+            snap = await self.aggregator.snapshot(symbol, timeframe="1m", limit=1)
+            return snap.price if snap else 0.0
+        except Exception:  # noqa: BLE001
+            return 0.0
+
     async def _update_open_positions(self, outcome: Any) -> None:
         """Sync _open_positions and persistence after a live execution.
 
@@ -700,16 +766,25 @@ class TradingLoop:
                     existing.get("tp_order_id"),
                 )
                 del self._open_positions[sym]
+                self._last_close_cycle[sym] = self._cycle
                 await self.persistence.async_save_position(sym, None)
                 return
 
         # New entry — place exchange bracket orders for both futures AND spot.
         entry_price = outcome.executed_price or 0.0
+        # Fallback: use the latest snapshot price so brackets are never silently skipped
+        if entry_price <= 0:
+            snap = await self._get_snapshot_price(sym)
+            if snap > 0:
+                self.logger.warning(
+                    "executed_price missing for %s — using snapshot price %.6f for bracket orders",
+                    sym, snap,
+                )
+                entry_price = snap
         sl_order_id: str | None = None
         tp_order_id: str | None = None
         sl_price: float | None = None
         tp_price: float | None = None
-        product = getattr(self.settings, "binance_product", "spot")
 
         if entry_price > 0 and action in (Action.BUY, Action.SELL):
             is_long = action == Action.BUY
@@ -772,6 +847,7 @@ class TradingLoop:
                     sym, pos.get("sl_order_id"), pos.get("tp_order_id")
                 )
                 del self._open_positions[sym]
+                self._last_close_cycle[sym] = self._cycle
                 await self.persistence.async_save_position(sym, None)
 
     async def _collect_htf_analyses(
@@ -1107,6 +1183,41 @@ class TradingLoop:
             self._consecutive_losses = 0
             self.logger.debug("Consecutive loss counter reset after take_profit")
 
+    def _attach_pnl(self, outcome: Any, snapshots: dict[str, Any]) -> Any:
+        """Compute and attach PnL to a close outcome using the tracked entry price."""
+        from src.domain.trading import TradeOutcome  # noqa: PLC0415
+
+        sym = outcome.decision.symbol
+        pos = self._open_positions.get(sym)
+        if not pos:
+            return outcome
+        entry_price = pos.get("entry_price", 0.0)
+        if entry_price <= 0:
+            return outcome
+        exit_price = outcome.executed_price or snapshots.get(sym, None) and snapshots[sym].price or 0.0
+        if exit_price <= 0:
+            return outcome
+        qty = outcome.decision.quantity
+        direction = pos.get("direction", "")
+        if direction == "BUY":  # was LONG
+            pnl = (exit_price - entry_price) * qty
+        elif direction == "SELL":  # was SHORT
+            pnl = (entry_price - exit_price) * qty
+        else:
+            return outcome
+        self.logger.info(
+            "PnL for %s close: entry=%.4f exit=%.4f qty=%.8f pnl=%.4f USDT",
+            sym, entry_price, exit_price, qty, pnl,
+        )
+        return TradeOutcome(
+            decision=outcome.decision,
+            order_id=outcome.order_id,
+            executed_price=exit_price,
+            pnl_usdt=pnl,
+            dry_run=outcome.dry_run,
+            timestamp=outcome.timestamp,
+        )
+
     def _check_slippage(self, outcome: Any, snapshots: dict[str, Any]) -> None:
         """Log a warning if executed price deviates more than max_slippage_pct from snapshot price."""
         executed_price = getattr(outcome, "executed_price", None)
@@ -1162,6 +1273,7 @@ class TradingLoop:
             # Strategy says no open position — remove it from the dict if present
             if sym in self._open_positions:
                 del self._open_positions[sym]
+                self._last_close_cycle[sym] = self._cycle
                 self.logger.debug("_sync_position_from_strategy: removed stale dict entry for %s", sym)
         else:
             # Mirror key fields so the monitor path and context formatter stay accurate

@@ -178,15 +178,19 @@ class RiskManager:
 
         # Signal scorer (and any other source) may leave quantity=0 — compute it
         # from balance using confidence-based sizing so the order has a real size.
+        # For futures, size_pct is the fraction of balance committed as *margin*;
+        # the notional is margin × leverage.
+        leverage = self._effective_leverage()
         if decision.quantity <= 0 and decision.action in (Action.BUY, Action.SELL):
             usdt_avail = self._usdt_balance(balance)
             confidence_map = {"HIGH": 0.03, "MEDIUM": 0.02, "LOW": 0.01}
             conf_key = "HIGH" if decision.confidence >= 70 else ("MEDIUM" if decision.confidence >= 40 else "LOW")
             size_pct = confidence_map[conf_key]
-            computed_qty = (usdt_avail * size_pct) / effective_price
+            margin_alloc = usdt_avail * size_pct
+            computed_qty = (margin_alloc * leverage) / effective_price
             self.logger.info(
-                "Auto-sizing %s: balance=%.2f size=%.1f%% price=%.4f → qty=%.8f",
-                decision.symbol, usdt_avail, size_pct * 100, effective_price, computed_qty,
+                "Auto-sizing %s: balance=%.2f size=%.1f%% leverage=%dx margin=%.2f price=%.4f → qty=%.8f",
+                decision.symbol, usdt_avail, size_pct * 100, leverage, margin_alloc, effective_price, computed_qty,
             )
             decision = TradeDecision(
                 symbol=decision.symbol,
@@ -201,11 +205,12 @@ class RiskManager:
             )
 
         notional = decision.quantity * effective_price
-        if notional > self.settings.max_order_usdt:
-            clamped_quantity = self.settings.max_order_usdt / effective_price
+        margin = notional / leverage
+        if margin > self.settings.max_order_usdt:
+            clamped_quantity = (self.settings.max_order_usdt * leverage) / effective_price
             self.logger.warning(
-                "Risk rule triggered: order notional %.4f exceeds max %.4f; clamping quantity to %.8f",
-                notional,
+                "Risk rule triggered: order margin %.4f exceeds max %.4f; clamping quantity to %.8f",
+                margin,
                 self.settings.max_order_usdt,
                 clamped_quantity,
             )
@@ -229,17 +234,17 @@ class RiskManager:
 
         if not dry_run:
             usdt_balance = self._usdt_balance(balance)
-            required_balance = notional * 1.01
-            if usdt_balance < required_balance:
+            required_margin = (notional / leverage) * 1.01
+            if usdt_balance < required_margin:
                 self.logger.warning(
-                    "Risk rule triggered: insufficient USDT balance %.4f < required %.4f",
+                    "Risk rule triggered: insufficient USDT balance %.4f < required margin %.4f",
                     usdt_balance,
-                    required_balance,
+                    required_margin,
                 )
                 return RiskValidationResult(
                     decision=self._hold(
                         decision,
-                        f"insufficient_balance: requires {required_balance:.4f} USDT, has {usdt_balance:.4f}",
+                        f"insufficient_balance: requires {required_margin:.4f} USDT margin, has {usdt_balance:.4f}",
                     ),
                     dry_run=dry_run,
                     status="blocked",
@@ -373,7 +378,10 @@ class RiskManager:
             )
 
         # 6. Calculate Financials
-        allocation = capital * final_size_pct
+        # For futures, size_pct is the fraction of capital used as margin;
+        # the notional position = margin × leverage.
+        leverage = self._effective_leverage()
+        allocation = capital * final_size_pct * leverage
         quantity = allocation / current_price
         entry_fee = allocation * self.settings.transaction_fee_percent
 
@@ -425,6 +433,12 @@ class RiskManager:
         ):
             return float(balance["free"]["USDT"])
         return 0.0
+
+    def _effective_leverage(self) -> int:
+        """Return futures leverage if trading futures, else 1 (spot)."""
+        if getattr(self.settings, "binance_product", "spot") == "usdt_futures":
+            return getattr(self.settings, "futures_leverage", 1)
+        return 1
 
     @staticmethod
     def _effective_price(decision: TradeDecision, balance: dict) -> float:

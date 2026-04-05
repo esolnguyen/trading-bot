@@ -29,14 +29,22 @@ class Executor:
         )
         self._api_client: Any | None = None
         self._lock = asyncio.Lock()
-        self._step_size_cache: dict[str, str] = (
-            {}
-        )  # symbol -> stepSize string e.g. "0.00001"
+        self._step_size_cache: dict[str, str] = {}
+        self._market_step_size_cache: dict[str, str] = {}
+        self._tick_size_cache: dict[str, str] = {}
 
-    async def __aenter__(self) -> "Executor":
+    async def initialize(self) -> None:
+        """Apply leverage and pre-warm exchange filters.
+
+        Called automatically by TradingLoop.run() at startup.  Also called
+        by ``__aenter__`` for callers that use the async-context-manager API.
+        """
         client = await self._ensure_api_client()
         await self._apply_leverage(client)
-        await self._prewarm_step_sizes(client)
+        await self._prewarm_filters(client)
+
+    async def __aenter__(self) -> "Executor":
+        await self.initialize()
         return self
 
     async def __aexit__(self, *_: object) -> None:
@@ -63,7 +71,8 @@ class Executor:
 
         client = await self._ensure_api_client()
         qty_str = await self._format_quantity(
-            decision.symbol, decision.quantity, client
+            decision.symbol, decision.quantity, client,
+            order_type=decision.order_type,
         )
         if float(qty_str) <= 0:
             logger.warning(
@@ -79,14 +88,32 @@ class Executor:
                 dry_run=True,
                 timestamp=decision.timestamp,
             )
+        # Map close actions to the Binance side that closes the position
+        _CLOSE_SIDE = {
+            Action.CLOSE_LONG: "SELL",
+            Action.CLOSE_SHORT: "BUY",
+        }
+        side = _CLOSE_SIDE.get(decision.action, decision.action.value)
+        is_close = decision.action in _CLOSE_SIDE
         params = {
             "symbol": decision.symbol,
-            "side": decision.action.value,
+            "side": side,
             "type": decision.order_type,
             "quantity": qty_str,
         }
+        if is_close and getattr(self.settings, "binance_product", "spot") == "usdt_futures":
+            params["reduceOnly"] = "true"
         if decision.price is not None:
-            params["price"] = decision.price
+            params["price"] = await self._format_price(
+                decision.symbol, decision.price, client
+            )
+        logger.info(
+            "Submitting order: %s (stepSize=%s, marketStepSize=%s, tickSize=%s)",
+            params,
+            self._step_size_cache.get(decision.symbol, "?"),
+            self._market_step_size_cache.get(decision.symbol, "?"),
+            self._tick_size_cache.get(decision.symbol, "?"),
+        )
         try:
             data = client.create_order(**params)
         except Exception as exc:  # noqa: BLE001
@@ -142,47 +169,20 @@ class Executor:
         sl_order_id: str | None = None
         tp_order_id: str | None = None
 
-        if is_futures:
-            # --- Futures: reduce-only market orders, no quantity required ---
-            try:
-                sl_data = client.create_order(
-                    symbol=symbol,
-                    side=close_side,
-                    type="STOP_MARKET",
-                    stopPrice=f"{sl_price:.2f}",
-                    closePosition="true",
-                )
-                sl_order_id = str(sl_data.get("orderId", "")) or None
-                logger.info(
-                    "Futures SL bracket placed: %s stopPrice=%.2f order=%s",
-                    symbol,
-                    sl_price,
-                    sl_order_id,
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.error(
-                    "Failed to place futures SL bracket for %s: %s", symbol, exc
-                )
+        sl_stop_str = await self._format_price(symbol, sl_price, client)
+        tp_stop_str = await self._format_price(symbol, tp_price, client)
 
-            try:
-                tp_data = client.create_order(
-                    symbol=symbol,
-                    side=close_side,
-                    type="TAKE_PROFIT_MARKET",
-                    stopPrice=f"{tp_price:.2f}",
-                    closePosition="true",
-                )
-                tp_order_id = str(tp_data.get("orderId", "")) or None
-                logger.info(
-                    "Futures TP bracket placed: %s stopPrice=%.2f order=%s",
-                    symbol,
-                    tp_price,
-                    tp_order_id,
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.error(
-                    "Failed to place futures TP bracket for %s: %s", symbol, exc
-                )
+        if is_futures:
+            # --- Futures: try STOP_MARKET/TAKE_PROFIT_MARKET first (mainnet).
+            # Fall back to STOP/TAKE_PROFIT with reduceOnly on -4120 (demo). ---
+            sl_order_id = await self._place_futures_bracket(
+                client, symbol, close_side, "STOP_MARKET", "STOP",
+                sl_price, sl_stop_str, quantity, "SL",
+            )
+            tp_order_id = await self._place_futures_bracket(
+                client, symbol, close_side, "TAKE_PROFIT_MARKET", "TAKE_PROFIT",
+                tp_price, tp_stop_str, quantity, "TP",
+            )
 
         else:
             # --- Spot: limit orders at a small offset from the trigger price ---
@@ -195,7 +195,7 @@ class Executor:
 
             sl_offset = getattr(self.settings, "spot_sl_limit_offset_pct", 0.01)
             tp_offset = getattr(self.settings, "spot_tp_limit_offset_pct", 0.002)
-            qty_str = f"{quantity:.8f}"
+            qty_str = await self._format_quantity(symbol, quantity, client)
 
             # SL: sell limit placed below trigger so it has room to fill on the way down
             if close_side == "SELL":
@@ -206,22 +206,25 @@ class Executor:
                 sl_limit_price = sl_price * (1.0 + sl_offset)
                 tp_limit_price = tp_price * (1.0 + tp_offset)
 
+            sl_limit_str = await self._format_price(symbol, sl_limit_price, client)
+            tp_limit_str = await self._format_price(symbol, tp_limit_price, client)
+
             try:
                 sl_data = client.create_order(
                     symbol=symbol,
                     side=close_side,
                     type="STOP_LOSS_LIMIT",
                     quantity=qty_str,
-                    stopPrice=f"{sl_price:.2f}",
-                    price=f"{sl_limit_price:.2f}",
+                    stopPrice=sl_stop_str,
+                    price=sl_limit_str,
                     timeInForce="GTC",
                 )
                 sl_order_id = str(sl_data.get("orderId", "")) or None
                 logger.info(
-                    "Spot SL bracket placed: %s stopPrice=%.2f limitPrice=%.2f qty=%s order=%s",
+                    "Spot SL bracket placed: %s stopPrice=%s limitPrice=%s qty=%s order=%s",
                     symbol,
-                    sl_price,
-                    sl_limit_price,
+                    sl_stop_str,
+                    sl_limit_str,
                     qty_str,
                     sl_order_id,
                 )
@@ -234,16 +237,16 @@ class Executor:
                     side=close_side,
                     type="TAKE_PROFIT_LIMIT",
                     quantity=qty_str,
-                    stopPrice=f"{tp_price:.2f}",
-                    price=f"{tp_limit_price:.2f}",
+                    stopPrice=tp_stop_str,
+                    price=tp_limit_str,
                     timeInForce="GTC",
                 )
                 tp_order_id = str(tp_data.get("orderId", "")) or None
                 logger.info(
-                    "Spot TP bracket placed: %s stopPrice=%.2f limitPrice=%.2f qty=%s order=%s",
+                    "Spot TP bracket placed: %s stopPrice=%s limitPrice=%s qty=%s order=%s",
                     symbol,
-                    tp_price,
-                    tp_limit_price,
+                    tp_stop_str,
+                    tp_limit_str,
                     qty_str,
                     tp_order_id,
                 )
@@ -276,6 +279,77 @@ class Executor:
                 logger.warning(
                     "Could not cancel %s bracket %s for %s: %s", label, oid, symbol, exc
                 )
+
+    async def _place_futures_bracket(
+        self,
+        client: Any,
+        symbol: str,
+        side: str,
+        market_type: str,
+        limit_type: str,
+        trigger_price: float,
+        stop_str: str,
+        quantity: float,
+        label: str,
+    ) -> str | None:
+        """Place a single futures bracket order (SL or TP).
+
+        Tries ``market_type`` (e.g. STOP_MARKET) first.  If the exchange
+        returns -4120 (not supported), falls back to ``limit_type``
+        (e.g. STOP) with reduceOnly and a 0.5 % price offset.
+        """
+        # --- Attempt 1: STOP_MARKET / TAKE_PROFIT_MARKET with closePosition ---
+        try:
+            data = client.create_order(
+                symbol=symbol,
+                side=side,
+                type=market_type,
+                stopPrice=stop_str,
+                closePosition="true",
+            )
+            oid = str(data.get("orderId", "")) or None
+            logger.info(
+                "Futures %s bracket placed: %s type=%s stopPrice=%s order=%s",
+                label, symbol, market_type, stop_str, oid,
+            )
+            return oid
+        except Exception as exc:  # noqa: BLE001
+            if "-4120" not in str(exc):
+                logger.error("Failed to place futures %s bracket for %s: %s", label, symbol, exc)
+                return None
+            logger.info(
+                "%s not supported on this endpoint for %s — falling back to %s",
+                market_type, symbol, limit_type,
+            )
+
+        # --- Attempt 2: STOP / TAKE_PROFIT with reduceOnly + limit price ---
+        try:
+            offset = 0.005  # 0.5 % worse than trigger for fill safety
+            if side == "SELL":
+                limit_price = trigger_price * (1 - offset)
+            else:
+                limit_price = trigger_price * (1 + offset)
+            limit_str = await self._format_price(symbol, limit_price, client)
+            qty_str = await self._format_quantity(symbol, quantity, client)
+            data = client.create_order(
+                symbol=symbol,
+                side=side,
+                type=limit_type,
+                stopPrice=stop_str,
+                price=limit_str,
+                quantity=qty_str,
+                reduceOnly="true",
+                timeInForce="GTC",
+            )
+            oid = str(data.get("orderId", "")) or None
+            logger.info(
+                "Futures %s bracket placed: %s type=%s stopPrice=%s price=%s qty=%s order=%s",
+                label, symbol, limit_type, stop_str, limit_str, qty_str, oid,
+            )
+            return oid
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Failed to place futures %s bracket (fallback) for %s: %s", label, symbol, exc)
+            return None
 
     async def get_live_position_size(self, symbol: str) -> float:
         """Return the absolute open position quantity on the exchange.
@@ -382,6 +456,16 @@ class Executor:
                         return val
                 except (ValueError, TypeError):
                     pass
+        # Futures: compute from cumQuote / executedQty when price fields are zero
+        cum_quote = data.get("cumQuote") or data.get("cumBase")
+        exec_qty = data.get("executedQty")
+        if cum_quote is not None and exec_qty is not None:
+            try:
+                cq, eq = float(cum_quote), float(exec_qty)
+                if cq > 0 and eq > 0:
+                    return cq / eq
+            except (ValueError, TypeError, ZeroDivisionError):
+                pass
         for fill in data.get("fills") or []:
             raw = fill.get("price")
             if raw is not None:
@@ -393,14 +477,21 @@ class Executor:
                     pass
         return None
 
-    async def _format_quantity(self, symbol: str, quantity: float, client: Any) -> str:
-        """Round quantity down to the exchange's LOT_SIZE stepSize and return as string."""
-        step_size = await self._get_step_size(symbol, client)
+    async def _format_quantity(
+        self, symbol: str, quantity: float, client: Any, *, order_type: str = "LIMIT"
+    ) -> str:
+        """Round quantity down to the exchange's stepSize and return as string.
+
+        MARKET orders use MARKET_LOT_SIZE (coarser on some futures pairs);
+        all other order types use LOT_SIZE.
+        """
+        if order_type == "MARKET":
+            step_size = await self._get_market_step_size(symbol, client)
+        else:
+            step_size = await self._get_step_size(symbol, client)
         if not step_size:
-            # Step size unknown — raise so the order is blocked rather than sent
-            # with wrong precision (which would cause Binance -1111).
             raise RuntimeError(
-                f"Cannot determine LOT_SIZE stepSize for {symbol} — refusing to place order"
+                f"Cannot determine stepSize for {symbol} ({order_type}) — refusing to place order"
             )
         step = Decimal(step_size)
         qty = Decimal(str(quantity))
@@ -411,42 +502,100 @@ class Executor:
         decimals = max(0, -step.normalize().as_tuple().exponent)
         return f"{rounded:.{decimals}f}"
 
-    async def _get_step_size(self, symbol: str, client: Any) -> str:
-        """Fetch and cache the LOT_SIZE stepSize for a symbol."""
-        if symbol in self._step_size_cache:
-            return self._step_size_cache[symbol]
+    async def _format_price(self, symbol: str, price: float, client: Any) -> str:
+        """Round price to the exchange's PRICE_FILTER tickSize and return as string."""
+        tick_size = await self._get_tick_size(symbol, client)
+        if not tick_size:
+            raise RuntimeError(
+                f"Cannot determine PRICE_FILTER tickSize for {symbol} — refusing to place order"
+            )
+        tick = Decimal(tick_size)
+        p = Decimal(str(price))
+        rounded = (p // tick) * tick
+        decimals = max(0, -tick.normalize().as_tuple().exponent)
+        return f"{rounded:.{decimals}f}"
+
+    async def _cache_filters(self, symbol: str, client: Any) -> None:
+        """Fetch and cache LOT_SIZE, MARKET_LOT_SIZE, and PRICE_FILTER."""
+        if (
+            symbol in self._step_size_cache
+            and symbol in self._tick_size_cache
+            and symbol in self._market_step_size_cache
+        ):
+            return
         for attempt in range(3):
             try:
                 info = await asyncio.to_thread(client.get_exchange_info, symbol)
                 symbols = info.get("symbols") or []
-                filters = symbols[0].get("filters", []) if symbols else []
+                # Find the exact symbol — some endpoints ignore the symbol
+                # query param and return all symbols.
+                sym_info = next(
+                    (s for s in symbols if s.get("symbol") == symbol),
+                    symbols[0] if symbols else {},
+                )
+                filters = sym_info.get("filters", [])
                 for f in filters:
-                    if f.get("filterType") == "LOT_SIZE":
-                        step = f.get("stepSize", "")
-                        self._step_size_cache[symbol] = step
-                        logger.debug("Cached stepSize=%s for %s", step, symbol)
-                        return step
-                break  # got a response but no LOT_SIZE filter — don't retry
+                    ft = f.get("filterType")
+                    if ft == "LOT_SIZE":
+                        self._step_size_cache.setdefault(symbol, f.get("stepSize", ""))
+                    elif ft == "MARKET_LOT_SIZE":
+                        self._market_step_size_cache.setdefault(symbol, f.get("stepSize", ""))
+                    elif ft == "PRICE_FILTER":
+                        self._tick_size_cache.setdefault(symbol, f.get("tickSize", ""))
+                # Futures may not have MARKET_LOT_SIZE — fall back to LOT_SIZE
+                if symbol not in self._market_step_size_cache:
+                    self._market_step_size_cache[symbol] = self._step_size_cache.get(symbol, "")
+                logger.debug(
+                    "Cached filters for %s: stepSize=%s marketStepSize=%s tickSize=%s",
+                    symbol,
+                    self._step_size_cache.get(symbol, "?"),
+                    self._market_step_size_cache.get(symbol, "?"),
+                    self._tick_size_cache.get(symbol, "?"),
+                )
+                return
             except Exception as exc:  # noqa: BLE001
                 if attempt < 2:
                     await asyncio.sleep(1.0)
                 else:
                     logger.warning(
-                        "Could not fetch stepSize for %s after 3 attempts: %s",
+                        "Could not fetch filters for %s after 3 attempts: %s",
                         symbol,
                         exc,
                     )
-        return ""
 
-    async def _prewarm_step_sizes(self, client: Any) -> None:
-        """Fetch and cache LOT_SIZE stepSize for all configured symbols at startup."""
+    async def _get_step_size(self, symbol: str, client: Any) -> str:
+        """Return cached LOT_SIZE stepSize for a symbol."""
+        await self._cache_filters(symbol, client)
+        return self._step_size_cache.get(symbol, "")
+
+    async def _get_market_step_size(self, symbol: str, client: Any) -> str:
+        """Return cached MARKET_LOT_SIZE stepSize (falls back to LOT_SIZE)."""
+        await self._cache_filters(symbol, client)
+        return self._market_step_size_cache.get(symbol, "") or self._step_size_cache.get(symbol, "")
+
+    async def _get_tick_size(self, symbol: str, client: Any) -> str:
+        """Return cached PRICE_FILTER tickSize for a symbol."""
+        await self._cache_filters(symbol, client)
+        return self._tick_size_cache.get(symbol, "")
+
+    async def _prewarm_filters(self, client: Any) -> None:
+        """Fetch and cache LOT_SIZE, MARKET_LOT_SIZE, and PRICE_FILTER for all configured symbols."""
         symbols = getattr(self.settings, "trading_symbols", [])
         for symbol in symbols:
-            step = await self._get_step_size(symbol, client)
-            if step:
-                logger.info("Pre-warmed stepSize=%s for %s", step, symbol)
+            await self._cache_filters(symbol, client)
+            step = self._step_size_cache.get(symbol, "")
+            mkt_step = self._market_step_size_cache.get(symbol, "")
+            tick = self._tick_size_cache.get(symbol, "")
+            if step and tick:
+                logger.info(
+                    "Pre-warmed filters for %s: stepSize=%s marketStepSize=%s tickSize=%s",
+                    symbol, step, mkt_step, tick,
+                )
             else:
-                logger.warning("Could not pre-warm stepSize for %s — orders will be blocked", symbol)
+                logger.warning(
+                    "Could not pre-warm filters for %s (step=%s mktStep=%s tick=%s)",
+                    symbol, step, mkt_step, tick,
+                )
 
     async def _apply_leverage(self, client: Any) -> None:
         """Set configured leverage on all trading symbols (futures only)."""

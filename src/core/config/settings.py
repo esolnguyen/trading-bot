@@ -302,6 +302,9 @@ class Settings:
     scoring_w_key_levels: float = 0.10       # S/R proximity
     # Multipliers
     scoring_choppiness_penalty: float = 0.3  # multiply score by this when choppy
+    # Re-entry cooldown: skip N cycles after a position closes before opening
+    # a new one on the same symbol (prevents rapid-fire flipping)
+    reentry_cooldown_cycles: int = 3
 
     # ------------------------------------------------------------------ #
     # ML / OHLCV
@@ -508,6 +511,7 @@ class Settings:
             scoring_w_volume=_parse_float(os.getenv("SCORING_W_VOLUME"), default=0.10),
             scoring_w_key_levels=_parse_float(os.getenv("SCORING_W_KEY_LEVELS"), default=0.10),
             scoring_choppiness_penalty=_parse_float(os.getenv("SCORING_CHOPPINESS_PENALTY"), default=0.3),
+            reentry_cooldown_cycles=int(os.getenv("REENTRY_COOLDOWN_CYCLES", "3")),
             # ML / OHLCV
             ml_timeframe=os.getenv("ML_TIMEFRAME", "4h").strip().lower(),
             # Debug / directories
