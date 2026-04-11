@@ -34,7 +34,6 @@ class VectorMemoryService:
         "support_resistance",
     )
 
-
     def __init__(self, chroma_store: Any, embedding_model: Any = None, logger: logging.Logger | None = None):
         """Initialize vector memory service.
 
@@ -72,14 +71,17 @@ class VectorMemoryService:
             )
 
             self._initialized = True
-            self.logger.info("VectorMemoryService collections ready: %s experiences stored", self._collection.count())
+            self.logger.info(
+                "VectorMemoryService collections ready: %s experiences stored", self._collection.count())
             return True
 
         except ImportError as e:
-            self.logger.warning("VectorMemoryService unavailable (missing dependency): %s", e)
+            self.logger.warning(
+                "VectorMemoryService unavailable (missing dependency): %s", e)
             return False
         except Exception as e:
-            self.logger.error("Failed to initialize VectorMemoryService: %s", e, exc_info=True)
+            self.logger.error(
+                "Failed to initialize VectorMemoryService: %s", e, exc_info=True)
             return False
 
     def _sanitize_metadata(self, metadata: Dict[str, Any]) -> Dict[str, Any]:
@@ -117,7 +119,8 @@ class VectorMemoryService:
             True if stored successfully, False otherwise.
         """
         if not self._ensure_initialized():
-            self.logger.warning("VectorMemoryService not initialized, cannot store experience.")
+            self.logger.warning(
+                "VectorMemoryService not initialized, cannot store experience.")
             return False
 
         try:
@@ -153,7 +156,8 @@ class VectorMemoryService:
                 metadatas=[trade_metadata]
             )
 
-            self.logger.info("Stored experience: %s (%s, %s%%)", trade_id, outcome, f"{pnl_pct:+.2f}")
+            self.logger.info("Stored experience: %s (%s, %s%%)",
+                             trade_id, outcome, f"{pnl_pct:+.2f}")
             return True
 
         except Exception as e:
@@ -214,7 +218,8 @@ class VectorMemoryService:
             if self._collection.count() == 0:
                 return []
 
-            query_embedding = self._embedding_model.encode(current_context).tolist()
+            query_embedding = self._embedding_model.encode(
+                current_context).tolist()
 
             query_kwargs = {
                 "query_embeddings": [query_embedding],
@@ -227,12 +232,15 @@ class VectorMemoryService:
             experiences = []
             if results and results["ids"] and results["ids"][0]:
                 for i, doc_id in enumerate(results["ids"][0]):
-                    similarity = 1 - results["distances"][0][i] if results["distances"] else 0
-                    meta = results["metadatas"][0][i] if results["metadatas"] else {}
+                    similarity = 1 - \
+                        results["distances"][0][i] if results["distances"] else 0
+                    meta = results["metadatas"][0][i] if results["metadatas"] else {
+                    }
 
                     if use_decay:
                         timestamp = meta.get("timestamp", "")
-                        recency = self._calculate_recency_score(timestamp, decay_half_life_days)
+                        recency = self._calculate_recency_score(
+                            timestamp, decay_half_life_days)
                         hybrid_score = similarity * 0.7 + recency * 0.3
                     else:
                         recency = 1.0
@@ -308,7 +316,8 @@ class VectorMemoryService:
             if reasoning and reasoning != "N/A":
                 lines.append(f'   - Key Insight: "{reasoning}"')
             else:
-                lines.append(f'   - Key Insight: "{self._generate_synthetic_insight(meta)}"')
+                lines.append(
+                    f'   - Key Insight: "{self._generate_synthetic_insight(meta)}"')
             lines.append("")
 
         anti_patterns = self.get_anti_patterns_for_prompt(k=2)
@@ -417,7 +426,8 @@ class VectorMemoryService:
             return 0
         try:
             # Count only WIN and LOSS outcomes
-            results = self._collection.get(where={"outcome": {"$ne": "UPDATE"}})
+            results = self._collection.get(
+                where={"outcome": {"$ne": "UPDATE"}})
             return len(results["ids"]) if results and results["ids"] else 0
         except Exception:
             return self._collection.count()
@@ -478,7 +488,7 @@ class VectorMemoryService:
                     experiences.append(VectorSearchResult(
                         id=doc_id,
                         document=doc,
-                        similarity=0, # No similarity score for direct retrieval
+                        similarity=0,  # No similarity score for direct retrieval
                         recency=0,
                         hybrid_score=0,
                         metadata=meta
@@ -489,7 +499,6 @@ class VectorMemoryService:
         except Exception as e:
             self.logger.error("Failed to retrieve all experiences: %s", e)
             return []
-
 
     def store_semantic_rule(
         self,
@@ -597,12 +606,14 @@ class VectorMemoryService:
             if count == 0:
                 return []
 
-            query_embedding = self._embedding_model.encode(current_context).tolist()
+            query_embedding = self._embedding_model.encode(
+                current_context).tolist()
 
             results = self._semantic_rules_collection.query(
                 query_embeddings=[query_embedding],
                 where={"active": True},
-                n_results=min(n_results * 2, count)  # Fetch extra, filter by threshold
+                # Fetch extra, filter by threshold
+                n_results=min(n_results * 2, count)
             )
 
             rules = []
@@ -649,7 +660,8 @@ class VectorMemoryService:
         """
         rules = self.get_active_rules(n_results=k * 2)
 
-        anti_rules = [r for r in rules if r.get("metadata", {}).get("rule_type") == "anti_pattern"]
+        anti_rules = [r for r in rules if r.get(
+            "metadata", {}).get("rule_type") == "anti_pattern"]
 
         if not anti_rules:
             return ""
@@ -852,9 +864,12 @@ class VectorMemoryService:
             pnl = meta.get("pnl_pct", 0)
             is_win = meta.get("outcome") == "WIN"
 
-            _add_to_cat("Sentiment", meta.get("market_sentiment_at_entry", meta.get("market_sentiment")), pnl, is_win)
-            _add_to_cat("Volatility", meta.get("volatility_level", meta.get("volatility")), pnl, is_win)
-            _add_to_cat("Trend", meta.get("trend_direction_at_entry", meta.get("trend_direction")), pnl, is_win)
+            _add_to_cat("Sentiment", meta.get(
+                "market_sentiment_at_entry", meta.get("market_sentiment")), pnl, is_win)
+            _add_to_cat("Volatility", meta.get("volatility_level",
+                        meta.get("volatility")), pnl, is_win)
+            _add_to_cat("Trend", meta.get("trend_direction_at_entry",
+                        meta.get("trend_direction")), pnl, is_win)
 
         for cat_name, trades_list in categorical_buckets.items():
             total = len(trades_list)
@@ -932,13 +947,15 @@ class VectorMemoryService:
 
             if rr_wins:
                 avg_winning_rr = sum(rr_wins) / len(rr_wins)
-                thresholds["min_rr_recommended"] = round(avg_winning_rr * 0.8, 1)
+                thresholds["min_rr_recommended"] = round(
+                    avg_winning_rr * 0.8, 1)
 
                 # Learn rr_strong_setup - find 75th percentile of winning R/R
                 sorted_rr = sorted(rr_wins)
                 p75_idx = int(len(sorted_rr) * 0.75)
                 if p75_idx < len(sorted_rr):
-                    thresholds["rr_strong_setup"] = round(sorted_rr[p75_idx], 1)
+                    thresholds["rr_strong_setup"] = round(
+                        sorted_rr[p75_idx], 1)
 
             # Learn rr_borderline_min - find R/R where win rate drops significantly
             if rr_wins and rr_losses:
@@ -955,7 +972,8 @@ class VectorMemoryService:
                             break
 
             if sl_distances:
-                thresholds["avg_sl_pct"] = round(sum(sl_distances) / len(sl_distances), 2)
+                thresholds["avg_sl_pct"] = round(
+                    sum(sl_distances) / len(sl_distances), 2)
 
         conf_stats = self.compute_confidence_stats()
         high_stats = conf_stats.get("HIGH", {})
@@ -965,9 +983,12 @@ class VectorMemoryService:
             elif high_stats.get("win_rate", 0) > 70:
                 thresholds["confidence_threshold"] = 65
 
-        self._learn_position_size_threshold(all_experiences, min_sample_size, thresholds)
-        self._learn_confluence_thresholds(all_experiences, min_sample_size, thresholds)
-        self._learn_alignment_thresholds(all_experiences, min_sample_size, thresholds)
+        self._learn_position_size_threshold(
+            all_experiences, min_sample_size, thresholds)
+        self._learn_confluence_thresholds(
+            all_experiences, min_sample_size, thresholds)
+        self._learn_alignment_thresholds(
+            all_experiences, min_sample_size, thresholds)
 
         return thresholds
 
@@ -1014,14 +1035,16 @@ class VectorMemoryService:
         for count in range(5, 1, -1):
             key = (count, True)
             if key in confluence_buckets and len(confluence_buckets[key]) >= min_sample_size:
-                win_rate = sum(confluence_buckets[key]) / len(confluence_buckets[key])
+                win_rate = sum(
+                    confluence_buckets[key]) / len(confluence_buckets[key])
                 if win_rate >= 0.55:
                     thresholds["min_confluences_weak"] = count
                     break
         for count in range(4, 1, -1):
             key = (count, False)
             if key in confluence_buckets and len(confluence_buckets[key]) >= min_sample_size:
-                win_rate = sum(confluence_buckets[key]) / len(confluence_buckets[key])
+                win_rate = sum(
+                    confluence_buckets[key]) / len(confluence_buckets[key])
                 if win_rate >= 0.55:
                     thresholds["min_confluences_standard"] = count
                     break
@@ -1035,7 +1058,8 @@ class VectorMemoryService:
         """Learn position_reduce_mixed and position_reduce_divergent from timeframe alignment performance."""
         if not all_experiences or not all_experiences.get("metadatas"):
             return
-        alignment_pnl: Dict[str, List[float]] = {"ALIGNED": [], "MIXED": [], "DIVERGENT": []}
+        alignment_pnl: Dict[str, List[float]] = {
+            "ALIGNED": [], "MIXED": [], "DIVERGENT": []}
         for meta in all_experiences["metadatas"]:
             alignment = meta.get("timeframe_alignment")
             pnl = meta.get("pnl_pct", 0)
@@ -1044,14 +1068,17 @@ class VectorMemoryService:
         aligned_avg = (sum(alignment_pnl["ALIGNED"]) / len(alignment_pnl["ALIGNED"])
                        if alignment_pnl["ALIGNED"] else 0)
         if len(alignment_pnl["MIXED"]) >= min_sample_size and aligned_avg > 0:
-            mixed_avg = sum(alignment_pnl["MIXED"]) / len(alignment_pnl["MIXED"])
+            mixed_avg = sum(alignment_pnl["MIXED"]) / \
+                len(alignment_pnl["MIXED"])
             if mixed_avg < aligned_avg:
                 reduction = min(0.40, max(0.10, 1 - (mixed_avg / aligned_avg)))
                 thresholds["position_reduce_mixed"] = round(reduction, 2)
         if len(alignment_pnl["DIVERGENT"]) >= min_sample_size and aligned_avg > 0:
-            divergent_avg = sum(alignment_pnl["DIVERGENT"]) / len(alignment_pnl["DIVERGENT"])
+            divergent_avg = sum(
+                alignment_pnl["DIVERGENT"]) / len(alignment_pnl["DIVERGENT"])
             if divergent_avg < aligned_avg:
-                reduction = min(0.50, max(0.20, 1 - (divergent_avg / aligned_avg)))
+                reduction = min(
+                    0.50, max(0.20, 1 - (divergent_avg / aligned_avg)))
                 thresholds["position_reduce_divergent"] = round(reduction, 2)
 
     def get_confidence_recommendation(self, min_sample_size: int = 5) -> Optional[str]:

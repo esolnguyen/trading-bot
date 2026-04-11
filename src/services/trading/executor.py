@@ -273,7 +273,11 @@ class Executor:
             if not oid:
                 continue
             try:
-                client.cancel_order(symbol, int(oid))
+                if oid.startswith("algo:"):
+                    strategy_id = int(oid[len("algo:"):])
+                    client.cancel_algo_order(strategy_id)
+                else:
+                    client.cancel_order(symbol, int(oid))
                 logger.info("Cancelled %s bracket order %s for %s", label, oid, symbol)
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
@@ -294,11 +298,15 @@ class Executor:
     ) -> str | None:
         """Place a single futures bracket order (SL or TP).
 
-        Tries ``market_type`` (e.g. STOP_MARKET) first.  If the exchange
-        returns -4120 (not supported), falls back to ``limit_type``
-        (e.g. STOP) with reduceOnly and a 0.5 % price offset.
+        Fallback chain (each step tried only if the previous returns -4120):
+          1. STOP_MARKET / TAKE_PROFIT_MARKET with ``closePosition=true``  (mainnet)
+          2. STOP_MARKET / TAKE_PROFIT_MARKET with ``reduceOnly=true`` + qty  (demo-fapi)
+          3. STOP / TAKE_PROFIT limit with ``reduceOnly=true`` + 0.5 % price offset
+          4. Algo Order API
         """
-        # --- Attempt 1: STOP_MARKET / TAKE_PROFIT_MARKET with closePosition ---
+        qty_str = await self._format_quantity(symbol, quantity, client)
+
+        # --- Attempt 1: market type with closePosition ---
         try:
             data = client.create_order(
                 symbol=symbol,
@@ -318,11 +326,36 @@ class Executor:
                 logger.error("Failed to place futures %s bracket for %s: %s", label, symbol, exc)
                 return None
             logger.info(
-                "%s not supported on this endpoint for %s — falling back to %s",
+                "%s not supported on this endpoint for %s — falling back to %s with reduceOnly",
+                market_type, symbol, market_type,
+            )
+
+        # --- Attempt 2: market type with reduceOnly + quantity (demo-fapi) ---
+        try:
+            data = client.create_order(
+                symbol=symbol,
+                side=side,
+                type=market_type,
+                stopPrice=stop_str,
+                quantity=qty_str,
+                reduceOnly="true",
+            )
+            oid = str(data.get("orderId", "")) or None
+            logger.info(
+                "Futures %s bracket placed: %s type=%s stopPrice=%s qty=%s order=%s",
+                label, symbol, market_type, stop_str, qty_str, oid,
+            )
+            return oid
+        except Exception as exc:  # noqa: BLE001
+            if "-4120" not in str(exc):
+                logger.error("Failed to place futures %s bracket (reduceOnly) for %s: %s", label, symbol, exc)
+                return None
+            logger.info(
+                "%s reduceOnly not supported on this endpoint for %s — falling back to %s",
                 market_type, symbol, limit_type,
             )
 
-        # --- Attempt 2: STOP / TAKE_PROFIT with reduceOnly + limit price ---
+        # --- Attempt 3: STOP / TAKE_PROFIT with reduceOnly + limit price ---
         try:
             offset = 0.005  # 0.5 % worse than trigger for fill safety
             if side == "SELL":
@@ -330,7 +363,6 @@ class Executor:
             else:
                 limit_price = trigger_price * (1 + offset)
             limit_str = await self._format_price(symbol, limit_price, client)
-            qty_str = await self._format_quantity(symbol, quantity, client)
             data = client.create_order(
                 symbol=symbol,
                 side=side,
@@ -348,7 +380,33 @@ class Executor:
             )
             return oid
         except Exception as exc:  # noqa: BLE001
-            logger.error("Failed to place futures %s bracket (fallback) for %s: %s", label, symbol, exc)
+            if "-4120" not in str(exc):
+                logger.error("Failed to place futures %s bracket (%s fallback) for %s: %s", label, limit_type, symbol, exc)
+                return None
+            logger.info(
+                "%s not supported on this endpoint for %s — falling back to Algo Order API",
+                limit_type, symbol,
+            )
+
+        # --- Attempt 4: Algo Order API ---
+        try:
+            if label == "SL":
+                data = client.create_algo_sl_order(
+                    symbol=symbol, side=side, stop_price=stop_str, close_position=True,
+                )
+            else:
+                data = client.create_algo_tp_order(
+                    symbol=symbol, side=side, stop_price=stop_str, close_position=True,
+                )
+            strategy_id = str(data.get("strategyId", "")) or None
+            oid = f"algo:{strategy_id}" if strategy_id else None
+            logger.info(
+                "Futures %s bracket placed via Algo API: %s stopPrice=%s strategyId=%s",
+                label, symbol, stop_str, strategy_id,
+            )
+            return oid
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Failed to place futures %s bracket (algo fallback) for %s: %s", label, symbol, exc)
             return None
 
     async def get_live_position_size(self, symbol: str) -> float:

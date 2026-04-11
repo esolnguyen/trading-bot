@@ -9,7 +9,8 @@ from typing import Any, ClassVar, Dict
 from dotenv import load_dotenv
 
 
-_VALID_PROVIDERS = frozenset({"azure", "googleai", "openrouter", "local", "blockrun", "all"})
+_VALID_PROVIDERS = frozenset(
+    {"azure", "googleai", "openrouter", "local", "blockrun", "all"})
 
 
 def _parse_bool(raw_value: str | None, *, default: bool) -> bool:
@@ -187,35 +188,42 @@ class Settings:
     # ------------------------------------------------------------------ #
     # Trading symbols & order management
     # ------------------------------------------------------------------ #
-    trading_symbols: list[str] = field(default_factory=lambda: ["BTCUSDT", "ETHUSDT"])
+    trading_symbols: list[str] = field(
+        default_factory=lambda: ["BTCUSDT", "ETHUSDT"])
     limit_order_timeout_seconds: int = 300
     trade_memory_max_entries: int = 500
 
     # ------------------------------------------------------------------ #
     # Risk guards
     # ------------------------------------------------------------------ #
-    max_daily_loss_pct: float = 0.05          # halt trading after losing this % of capital in one day
-    max_consecutive_losses: int = 3           # halt trading after this many losses in a row
-    min_confidence_threshold: float = 0.0    # skip LLM decisions below this confidence (0-100); 0 = disabled
+    # halt trading after losing this % of capital in one day
+    max_daily_loss_pct: float = 0.05
+    # halt trading after this many losses in a row
+    max_consecutive_losses: int = 3
+    # skip LLM decisions below this confidence (0-100); 0 = disabled
+    min_confidence_threshold: float = 0.0
 
     # ------------------------------------------------------------------ #
     # Trailing stop
     # ------------------------------------------------------------------ #
     trailing_stop_enabled: bool = False
-    trailing_stop_activation_pct: float = 0.01   # profit % required to activate trailing stop
+    # profit % required to activate trailing stop
+    trailing_stop_activation_pct: float = 0.01
     trailing_stop_distance_pct: float = 0.005    # trail distance from best price
 
     # ------------------------------------------------------------------ #
     # Partial take-profit
     # ------------------------------------------------------------------ #
     partial_tp_enabled: bool = False
-    partial_tp1_atr_multiplier: float = 2.0  # TP1 = entry ± (ATR × this); full TP uses 4x
+    # TP1 = entry ± (ATR × this); full TP uses 4x
+    partial_tp1_atr_multiplier: float = 2.0
     partial_tp1_size_pct: float = 0.5        # fraction of position closed at TP1
 
     # ------------------------------------------------------------------ #
     # Regime detection
     # ------------------------------------------------------------------ #
-    choppiness_threshold: float = 61.8       # skip entry signals when choppiness > this
+    # skip entry signals when choppiness > this
+    choppiness_threshold: float = 61.8
 
     # ------------------------------------------------------------------ #
     # Signal RSI thresholds — auto-relaxed for short timeframes (≤15m) by
@@ -241,8 +249,8 @@ class Settings:
         minutes = _tf_minutes.get(self.timeframe, 60)
 
         sb = self.signal_rsi_strong_buy
-        b  = self.signal_rsi_buy
-        s  = self.signal_rsi_sell
+        b = self.signal_rsi_buy
+        s = self.signal_rsi_sell
         ss = self.signal_rsi_strong_sell
 
         if minutes <= 5:        # 1m / 5m: very relaxed
@@ -257,7 +265,8 @@ class Settings:
     # Multi-timeframe confirmation
     # ------------------------------------------------------------------ #
     htf_timeframe: str = "4h"
-    htf_confirmation_enabled: bool = False   # require HTF trend agreement before entry
+    # require HTF trend agreement before entry
+    htf_confirmation_enabled: bool = False
 
     # When True, all trading symbols are evaluated in a single LLM call instead
     # of one call per symbol. The LLM picks the best opportunity across symbols.
@@ -268,24 +277,29 @@ class Settings:
     # ------------------------------------------------------------------ #
     # Execution validation
     # ------------------------------------------------------------------ #
-    max_slippage_pct: float = 0.005          # warn if executed price deviates > 0.5% from decision price
+    # warn if executed price deviates > 0.5% from decision price
+    max_slippage_pct: float = 0.005
 
     # ------------------------------------------------------------------ #
     # Fast position monitor
     # ------------------------------------------------------------------ #
     position_monitor_enabled: bool = True
-    position_monitor_interval: int = 15     # seconds between fast SL price checks (independent of main cycle)
+    # seconds between fast SL price checks (independent of main cycle)
+    position_monitor_interval: int = 15
 
     # ------------------------------------------------------------------ #
     # Spot bracket orders
     # ------------------------------------------------------------------ #
-    spot_sl_limit_offset_pct: float = 0.01  # STOP_LOSS_LIMIT price = stopPrice × (1 - this); gives 1% fill room
-    spot_tp_limit_offset_pct: float = 0.002 # TAKE_PROFIT_LIMIT price = stopPrice × (1 - this) for sells
+    # STOP_LOSS_LIMIT price = stopPrice × (1 - this); gives 1% fill room
+    spot_sl_limit_offset_pct: float = 0.01
+    # TAKE_PROFIT_LIMIT price = stopPrice × (1 - this) for sells
+    spot_tp_limit_offset_pct: float = 0.002
 
     # ------------------------------------------------------------------ #
     # Futures leverage
     # ------------------------------------------------------------------ #
-    futures_leverage: int = 1   # applied to all trading_symbols on startup (futures only)
+    # applied to all trading_symbols on startup (futures only)
+    futures_leverage: int = 1
 
     # ------------------------------------------------------------------ #
     # Signal Scorer (deterministic engine — replaces LLM when enabled)
@@ -309,7 +323,8 @@ class Settings:
     # ------------------------------------------------------------------ #
     # ML / OHLCV
     # ------------------------------------------------------------------ #
-    ml_timeframe: str = "4h"   # candle resolution used for ML training & scoring: 15m | 1h | 4h
+    # candle resolution used for ML training & scoring: 15m | 1h | 4h
+    ml_timeframe: str = "4h"
 
     # ------------------------------------------------------------------ #
     # Debug / directories
@@ -337,7 +352,8 @@ class Settings:
     # How many documents to pull from each Chroma collection at decision time.
     # Lower numbers = fewer tokens in the prompt. Tune to your cost tolerance.
     rag_retrieval_news: int = 3      # was hardcoded 5
-    rag_retrieval_macro: int = 1     # was hardcoded 3; macro is global, 1 doc is usually enough
+    # was hardcoded 3; macro is global, 1 doc is usually enough
+    rag_retrieval_macro: int = 1
     rag_retrieval_memory: int = 2    # was hardcoded 3
 
     def __post_init__(self) -> None:
@@ -391,151 +407,239 @@ class Settings:
             azure_endpoint=os.getenv("AZURE_ENDPOINT", "").strip(),
             azure_api_key=os.getenv("AZURE_API_KEY", "").strip(),
             azure_deployment=os.getenv("AZURE_DEPLOYMENT", "").strip(),
-            azure_api_version=os.getenv("AZURE_API_VERSION", "2024-08-01-preview").strip(),
+            azure_api_version=os.getenv(
+                "AZURE_API_VERSION", "2024-08-01-preview").strip(),
             # Binance
             binance_api_key=cls._require_str("BINANCE_API_KEY"),
             binance_api_secret=cls._require_str("BINANCE_API_SECRET"),
-            binance_product=os.getenv("BINANCE_PRODUCT", "spot").strip().lower(),
+            binance_product=os.getenv(
+                "BINANCE_PRODUCT", "spot").strip().lower(),
             binance_base_url=os.getenv("BINANCE_BASE_URL", "").strip(),
-            binance_testnet=_parse_bool(os.getenv("BINANCE_TESTNET"), default=True),
+            binance_testnet=_parse_bool(
+                os.getenv("BINANCE_TESTNET"), default=True),
             # Bot
-            bot_interval_seconds=_parse_int(os.getenv("BOT_INTERVAL_SECONDS"), default=0),
-            max_order_usdt=_parse_float(os.getenv("MAX_ORDER_USDT"), default=50.0),
+            bot_interval_seconds=_parse_int(
+                os.getenv("BOT_INTERVAL_SECONDS"), default=0),
+            max_order_usdt=_parse_float(
+                os.getenv("MAX_ORDER_USDT"), default=50.0),
             bot_enabled=_parse_bool(os.getenv("BOT_ENABLED"), default=False),
             bot_dry_run=_parse_bool(os.getenv("BOT_DRY_RUN"), default=True),
-            model_supports_vision=_parse_bool(os.getenv("MODEL_SUPPORTS_VISION"), default=False),
+            model_supports_vision=_parse_bool(
+                os.getenv("MODEL_SUPPORTS_VISION"), default=False),
             # RAG / ChromaDB
             cryptocompare_api_key=cls._require_str("CRYPTOCOMPARE_API_KEY"),
             coingecko_api_key=os.getenv("COINGECKO_API_KEY", "").strip(),
             chroma_path=os.getenv("CHROMA_PATH", "./chroma_db"),
             news_interval=_parse_int(os.getenv("NEWS_INTERVAL"), default=900),
-            macro_interval=_parse_int(os.getenv("MACRO_INTERVAL"), default=1800),
-            ohlcv_interval=_parse_int(os.getenv("OHLCV_INTERVAL"), default=3600),
+            macro_interval=_parse_int(
+                os.getenv("MACRO_INTERVAL"), default=1800),
+            ohlcv_interval=_parse_int(
+                os.getenv("OHLCV_INTERVAL"), default=3600),
             # AI provider selection
             provider=os.getenv("PROVIDER", "azure").strip().lower(),
             # Google
-            google_studio_api_key=os.getenv("GOOGLE_STUDIO_API_KEY", "").strip(),
-            google_studio_paid_api_key=os.getenv("GOOGLE_STUDIO_PAID_API_KEY", "").strip(),
-            google_studio_model=os.getenv("GOOGLE_STUDIO_MODEL", "gemini-2.5-flash").strip(),
+            google_studio_api_key=os.getenv(
+                "GOOGLE_STUDIO_API_KEY", "").strip(),
+            google_studio_paid_api_key=os.getenv(
+                "GOOGLE_STUDIO_PAID_API_KEY", "").strip(),
+            google_studio_model=os.getenv(
+                "GOOGLE_STUDIO_MODEL", "gemini-2.5-flash").strip(),
             # OpenRouter
             openrouter_api_key=os.getenv("OPENROUTER_API_KEY", "").strip(),
-            openrouter_base_url=os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").strip(),
-            openrouter_base_model=os.getenv("OPENROUTER_BASE_MODEL", "google/gemini-2.5-pro").strip(),
-            openrouter_fallback_model=os.getenv("OPENROUTER_FALLBACK_MODEL", "deepseek/deepseek-r1:free").strip(),
+            openrouter_base_url=os.getenv(
+                "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").strip(),
+            openrouter_base_model=os.getenv(
+                "OPENROUTER_BASE_MODEL", "google/gemini-2.5-pro").strip(),
+            openrouter_fallback_model=os.getenv(
+                "OPENROUTER_FALLBACK_MODEL", "deepseek/deepseek-r1:free").strip(),
             # LM Studio
-            lm_studio_base_url=os.getenv("LM_STUDIO_BASE_URL", "http://localhost:1234/v1").strip(),
-            lm_studio_model=os.getenv("LM_STUDIO_MODEL", "local-model").strip(),
-            lm_studio_streaming=_parse_bool(os.getenv("LM_STUDIO_STREAMING"), default=True),
+            lm_studio_base_url=os.getenv(
+                "LM_STUDIO_BASE_URL", "http://localhost:1234/v1").strip(),
+            lm_studio_model=os.getenv(
+                "LM_STUDIO_MODEL", "local-model").strip(),
+            lm_studio_streaming=_parse_bool(
+                os.getenv("LM_STUDIO_STREAMING"), default=True),
             # BlockRun
             blockrun_wallet_key=os.getenv("BLOCKRUN_WALLET_KEY", "").strip(),
-            blockrun_base_url=os.getenv("BLOCKRUN_BASE_URL", "https://blockrun.ai/api").strip(),
-            blockrun_model=os.getenv("BLOCKRUN_MODEL", "openai/gpt-4o").strip(),
+            blockrun_base_url=os.getenv(
+                "BLOCKRUN_BASE_URL", "https://blockrun.ai/api").strip(),
+            blockrun_model=os.getenv(
+                "BLOCKRUN_MODEL", "openai/gpt-4o").strip(),
             # Model tuning
-            model_temperature=_parse_float(os.getenv("MODEL_TEMPERATURE"), default=0.7),
-            model_max_tokens=_parse_int(os.getenv("MODEL_MAX_TOKENS"), default=8192),
+            model_temperature=_parse_float(
+                os.getenv("MODEL_TEMPERATURE"), default=0.7),
+            model_max_tokens=_parse_int(
+                os.getenv("MODEL_MAX_TOKENS"), default=8192),
             model_top_p=_parse_float(os.getenv("MODEL_TOP_P"), default=0.9),
             model_top_k=_parse_int(os.getenv("MODEL_TOP_K"), default=40),
-            model_freq_penalty=_parse_float(os.getenv("MODEL_FREQ_PENALTY"), default=0.0),
-            model_pres_penalty=_parse_float(os.getenv("MODEL_PRES_PENALTY"), default=0.0),
-            google_max_tokens=_parse_int(os.getenv("GOOGLE_MAX_TOKENS"), default=32768),
-            google_temperature=_parse_float(os.getenv("GOOGLE_TEMPERATURE"), default=0.7),
+            model_freq_penalty=_parse_float(
+                os.getenv("MODEL_FREQ_PENALTY"), default=0.0),
+            model_pres_penalty=_parse_float(
+                os.getenv("MODEL_PRES_PENALTY"), default=0.0),
+            google_max_tokens=_parse_int(
+                os.getenv("GOOGLE_MAX_TOKENS"), default=32768),
+            google_temperature=_parse_float(
+                os.getenv("GOOGLE_TEMPERATURE"), default=0.7),
             google_top_p=_parse_float(os.getenv("GOOGLE_TOP_P"), default=0.9),
             google_top_k=_parse_int(os.getenv("GOOGLE_TOP_K"), default=40),
-            google_thinking_level=os.getenv("GOOGLE_THINKING_LEVEL", "high").strip(),
-            google_code_execution=_parse_bool(os.getenv("GOOGLE_CODE_EXECUTION"), default=False),
+            google_thinking_level=os.getenv(
+                "GOOGLE_THINKING_LEVEL", "high").strip(),
+            google_code_execution=_parse_bool(
+                os.getenv("GOOGLE_CODE_EXECUTION"), default=False),
             # Trading parameters
             crypto_pair=os.getenv("CRYPTO_PAIR", "BTC/USDT").strip(),
             timeframe=os.getenv("TIMEFRAME", "1h").strip(),
             candle_limit=_parse_int(os.getenv("CANDLE_LIMIT"), default=200),
-            ai_chart_candle_limit=_parse_int(os.getenv("AI_CHART_CANDLE_LIMIT"), default=120),
+            ai_chart_candle_limit=_parse_int(
+                os.getenv("AI_CHART_CANDLE_LIMIT"), default=120),
             ai_chart_timeframe=os.getenv("AI_CHART_TIMEFRAME", "5m").strip(),
-            demo_quote_capital=_parse_float(os.getenv("DEMO_QUOTE_CAPITAL"), default=10000.0),
-            transaction_fee_percent=_parse_float(os.getenv("TRANSACTION_FEE_PERCENT"), default=0.00075),
-            default_stop_loss_pct=_parse_float(os.getenv("DEFAULT_STOP_LOSS_PCT"), default=0.02),
-            default_take_profit_pct=_parse_float(os.getenv("DEFAULT_TAKE_PROFIT_PCT"), default=0.04),
-            default_position_size=_parse_float(os.getenv("DEFAULT_POSITION_SIZE"), default=0.02),
-            include_coin_description=_parse_bool(os.getenv("INCLUDE_COIN_DESCRIPTION"), default=False),
+            demo_quote_capital=_parse_float(
+                os.getenv("DEMO_QUOTE_CAPITAL"), default=10000.0),
+            transaction_fee_percent=_parse_float(
+                os.getenv("TRANSACTION_FEE_PERCENT"), default=0.00075),
+            default_stop_loss_pct=_parse_float(
+                os.getenv("DEFAULT_STOP_LOSS_PCT"), default=0.02),
+            default_take_profit_pct=_parse_float(
+                os.getenv("DEFAULT_TAKE_PROFIT_PCT"), default=0.04),
+            default_position_size=_parse_float(
+                os.getenv("DEFAULT_POSITION_SIZE"), default=0.02),
+            include_coin_description=_parse_bool(
+                os.getenv("INCLUDE_COIN_DESCRIPTION"), default=False),
             # Discord
-            discord_bot_enabled=_parse_bool(os.getenv("DISCORD_BOT_ENABLED"), default=False),
+            discord_bot_enabled=_parse_bool(
+                os.getenv("DISCORD_BOT_ENABLED"), default=False),
             bot_token_discord=os.getenv("BOT_TOKEN_DISCORD", "").strip(),
             guild_id_discord=os.getenv("GUILD_ID_DISCORD", "").strip(),
             main_channel_id=os.getenv("MAIN_CHANNEL_ID", "").strip(),
-            temporary_channel_id_discord=os.getenv("TEMPORARY_CHANNEL_ID_DISCORD", "").strip(),
+            temporary_channel_id_discord=os.getenv(
+                "TEMPORARY_CHANNEL_ID_DISCORD", "").strip(),
             admin_user_ids=parsed_admin_ids,
-            file_message_expiry=_parse_int(os.getenv("FILE_MESSAGE_EXPIRY_HOURS"), default=168) * 3600,
+            file_message_expiry=_parse_int(
+                os.getenv("FILE_MESSAGE_EXPIRY_HOURS"), default=168) * 3600,
             # Trading symbols & order management
-            trading_symbols=_parse_list(os.getenv("TRADING_SYMBOLS"), default=["BTCUSDT", "ETHUSDT"]),
-            limit_order_timeout_seconds=_parse_int(os.getenv("LIMIT_ORDER_TIMEOUT_SECONDS"), default=300),
-            trade_memory_max_entries=_parse_int(os.getenv("TRADE_MEMORY_MAX_ENTRIES"), default=500),
+            trading_symbols=_parse_list(os.getenv("TRADING_SYMBOLS"), default=[
+                                        "BTCUSDT", "ETHUSDT"]),
+            limit_order_timeout_seconds=_parse_int(
+                os.getenv("LIMIT_ORDER_TIMEOUT_SECONDS"), default=300),
+            trade_memory_max_entries=_parse_int(
+                os.getenv("TRADE_MEMORY_MAX_ENTRIES"), default=500),
             # Risk guards
-            max_daily_loss_pct=_parse_float(os.getenv("MAX_DAILY_LOSS_PCT"), default=0.05),
-            max_consecutive_losses=_parse_int(os.getenv("MAX_CONSECUTIVE_LOSSES"), default=3),
-            min_confidence_threshold=_parse_float(os.getenv("MIN_CONFIDENCE_THRESHOLD"), default=0.0),
+            max_daily_loss_pct=_parse_float(
+                os.getenv("MAX_DAILY_LOSS_PCT"), default=0.05),
+            max_consecutive_losses=_parse_int(
+                os.getenv("MAX_CONSECUTIVE_LOSSES"), default=3),
+            min_confidence_threshold=_parse_float(
+                os.getenv("MIN_CONFIDENCE_THRESHOLD"), default=0.0),
             # Trailing stop
-            trailing_stop_enabled=_parse_bool(os.getenv("TRAILING_STOP_ENABLED"), default=False),
-            trailing_stop_activation_pct=_parse_float(os.getenv("TRAILING_STOP_ACTIVATION_PCT"), default=0.01),
-            trailing_stop_distance_pct=_parse_float(os.getenv("TRAILING_STOP_DISTANCE_PCT"), default=0.005),
+            trailing_stop_enabled=_parse_bool(
+                os.getenv("TRAILING_STOP_ENABLED"), default=False),
+            trailing_stop_activation_pct=_parse_float(
+                os.getenv("TRAILING_STOP_ACTIVATION_PCT"), default=0.01),
+            trailing_stop_distance_pct=_parse_float(
+                os.getenv("TRAILING_STOP_DISTANCE_PCT"), default=0.005),
             # Partial TP
-            partial_tp_enabled=_parse_bool(os.getenv("PARTIAL_TP_ENABLED"), default=False),
-            partial_tp1_atr_multiplier=_parse_float(os.getenv("PARTIAL_TP1_ATR_MULTIPLIER"), default=2.0),
-            partial_tp1_size_pct=_parse_float(os.getenv("PARTIAL_TP1_SIZE_PCT"), default=0.5),
+            partial_tp_enabled=_parse_bool(
+                os.getenv("PARTIAL_TP_ENABLED"), default=False),
+            partial_tp1_atr_multiplier=_parse_float(
+                os.getenv("PARTIAL_TP1_ATR_MULTIPLIER"), default=2.0),
+            partial_tp1_size_pct=_parse_float(
+                os.getenv("PARTIAL_TP1_SIZE_PCT"), default=0.5),
             # Regime detection
-            choppiness_threshold=_parse_float(os.getenv("CHOPPINESS_THRESHOLD"), default=61.8),
+            choppiness_threshold=_parse_float(
+                os.getenv("CHOPPINESS_THRESHOLD"), default=61.8),
             # Signal RSI thresholds
-            signal_rsi_strong_buy=_parse_float(os.getenv("SIGNAL_RSI_STRONG_BUY"), default=30.0),
-            signal_rsi_buy=_parse_float(os.getenv("SIGNAL_RSI_BUY"), default=40.0),
-            signal_rsi_sell=_parse_float(os.getenv("SIGNAL_RSI_SELL"), default=60.0),
-            signal_rsi_strong_sell=_parse_float(os.getenv("SIGNAL_RSI_STRONG_SELL"), default=70.0),
+            signal_rsi_strong_buy=_parse_float(
+                os.getenv("SIGNAL_RSI_STRONG_BUY"), default=30.0),
+            signal_rsi_buy=_parse_float(
+                os.getenv("SIGNAL_RSI_BUY"), default=40.0),
+            signal_rsi_sell=_parse_float(
+                os.getenv("SIGNAL_RSI_SELL"), default=60.0),
+            signal_rsi_strong_sell=_parse_float(
+                os.getenv("SIGNAL_RSI_STRONG_SELL"), default=70.0),
             # Multi-timeframe
             htf_timeframe=os.getenv("HTF_TIMEFRAME", "4h").strip(),
-            htf_confirmation_enabled=_parse_bool(os.getenv("HTF_CONFIRMATION_ENABLED"), default=False),
-            single_symbol_decision=_parse_bool(os.getenv("SINGLE_SYMBOL_DECISION"), default=True),
+            htf_confirmation_enabled=_parse_bool(
+                os.getenv("HTF_CONFIRMATION_ENABLED"), default=False),
+            single_symbol_decision=_parse_bool(
+                os.getenv("SINGLE_SYMBOL_DECISION"), default=True),
             # Execution validation
-            max_slippage_pct=_parse_float(os.getenv("MAX_SLIPPAGE_PCT"), default=0.005),
+            max_slippage_pct=_parse_float(
+                os.getenv("MAX_SLIPPAGE_PCT"), default=0.005),
             # Fast position monitor
-            position_monitor_enabled=_parse_bool(os.getenv("POSITION_MONITOR_ENABLED"), default=True),
-            position_monitor_interval=_parse_int(os.getenv("POSITION_MONITOR_INTERVAL"), default=15),
+            position_monitor_enabled=_parse_bool(
+                os.getenv("POSITION_MONITOR_ENABLED"), default=True),
+            position_monitor_interval=_parse_int(
+                os.getenv("POSITION_MONITOR_INTERVAL"), default=15),
             # Spot bracket orders
-            spot_sl_limit_offset_pct=_parse_float(os.getenv("SPOT_SL_LIMIT_OFFSET_PCT"), default=0.01),
-            spot_tp_limit_offset_pct=_parse_float(os.getenv("SPOT_TP_LIMIT_OFFSET_PCT"), default=0.002),
+            spot_sl_limit_offset_pct=_parse_float(
+                os.getenv("SPOT_SL_LIMIT_OFFSET_PCT"), default=0.01),
+            spot_tp_limit_offset_pct=_parse_float(
+                os.getenv("SPOT_TP_LIMIT_OFFSET_PCT"), default=0.002),
             # Futures leverage
-            futures_leverage=_parse_int(os.getenv("FUTURES_LEVERAGE"), default=1),
+            futures_leverage=_parse_int(
+                os.getenv("FUTURES_LEVERAGE"), default=1),
             # Signal Scorer
-            use_signal_scorer=_parse_bool(os.getenv("USE_SIGNAL_SCORER"), default=False),
-            scoring_entry_threshold=_parse_float(os.getenv("SCORING_ENTRY_THRESHOLD"), default=0.30),
-            scoring_exit_threshold=_parse_float(os.getenv("SCORING_EXIT_THRESHOLD"), default=0.20),
-            scoring_w_signal=_parse_float(os.getenv("SCORING_W_SIGNAL"), default=0.25),
-            scoring_w_direction=_parse_float(os.getenv("SCORING_W_DIRECTION"), default=0.25),
-            scoring_w_trend=_parse_float(os.getenv("SCORING_W_TREND"), default=0.15),
-            scoring_w_momentum=_parse_float(os.getenv("SCORING_W_MOMENTUM"), default=0.15),
-            scoring_w_volume=_parse_float(os.getenv("SCORING_W_VOLUME"), default=0.10),
-            scoring_w_key_levels=_parse_float(os.getenv("SCORING_W_KEY_LEVELS"), default=0.10),
-            scoring_choppiness_penalty=_parse_float(os.getenv("SCORING_CHOPPINESS_PENALTY"), default=0.3),
-            reentry_cooldown_cycles=int(os.getenv("REENTRY_COOLDOWN_CYCLES", "3")),
+            use_signal_scorer=_parse_bool(
+                os.getenv("USE_SIGNAL_SCORER"), default=False),
+            scoring_entry_threshold=_parse_float(
+                os.getenv("SCORING_ENTRY_THRESHOLD"), default=0.30),
+            scoring_exit_threshold=_parse_float(
+                os.getenv("SCORING_EXIT_THRESHOLD"), default=0.20),
+            scoring_w_signal=_parse_float(
+                os.getenv("SCORING_W_SIGNAL"), default=0.25),
+            scoring_w_direction=_parse_float(
+                os.getenv("SCORING_W_DIRECTION"), default=0.25),
+            scoring_w_trend=_parse_float(
+                os.getenv("SCORING_W_TREND"), default=0.15),
+            scoring_w_momentum=_parse_float(
+                os.getenv("SCORING_W_MOMENTUM"), default=0.15),
+            scoring_w_volume=_parse_float(
+                os.getenv("SCORING_W_VOLUME"), default=0.10),
+            scoring_w_key_levels=_parse_float(
+                os.getenv("SCORING_W_KEY_LEVELS"), default=0.10),
+            scoring_choppiness_penalty=_parse_float(
+                os.getenv("SCORING_CHOPPINESS_PENALTY"), default=0.3),
+            reentry_cooldown_cycles=int(
+                os.getenv("REENTRY_COOLDOWN_CYCLES", "3")),
             # ML / OHLCV
             ml_timeframe=os.getenv("ML_TIMEFRAME", "4h").strip().lower(),
             # Debug / directories
             logger_debug=_parse_bool(os.getenv("LOGGER_DEBUG"), default=False),
-            debug_save_charts=_parse_bool(os.getenv("DEBUG_SAVE_CHARTS"), default=False),
-            debug_chart_save_path=os.getenv("DEBUG_CHART_SAVE_PATH", "test_images").strip(),
+            debug_save_charts=_parse_bool(
+                os.getenv("DEBUG_SAVE_CHARTS"), default=False),
+            debug_chart_save_path=os.getenv(
+                "DEBUG_CHART_SAVE_PATH", "test_images").strip(),
             log_dir=os.getenv("LOG_DIR", "logs").strip(),
             data_dir=os.getenv("DATA_DIR", "data").strip(),
             # RAG tuning
-            rag_update_interval_hours=_parse_int(os.getenv("RAG_UPDATE_INTERVAL_HOURS"), default=4),
-            rag_categories_update_interval_hours=_parse_int(os.getenv("RAG_CATEGORIES_UPDATE_INTERVAL_HOURS"), default=24),
-            rag_coingecko_update_interval_hours=_parse_int(os.getenv("RAG_COINGECKO_UPDATE_INTERVAL_HOURS"), default=24),
-            rag_defillama_update_interval_hours=_parse_float(os.getenv("RAG_DEFILLAMA_UPDATE_INTERVAL_HOURS"), default=0.25),
+            rag_update_interval_hours=_parse_int(
+                os.getenv("RAG_UPDATE_INTERVAL_HOURS"), default=4),
+            rag_categories_update_interval_hours=_parse_int(
+                os.getenv("RAG_CATEGORIES_UPDATE_INTERVAL_HOURS"), default=24),
+            rag_coingecko_update_interval_hours=_parse_int(
+                os.getenv("RAG_COINGECKO_UPDATE_INTERVAL_HOURS"), default=24),
+            rag_defillama_update_interval_hours=_parse_float(
+                os.getenv("RAG_DEFILLAMA_UPDATE_INTERVAL_HOURS"), default=0.25),
             rag_news_limit=_parse_int(os.getenv("RAG_NEWS_LIMIT"), default=5),
-            rag_article_max_tokens=_parse_int(os.getenv("RAG_ARTICLE_MAX_TOKENS"), default=256),
-            rag_density_penalty_threshold=_parse_int(os.getenv("RAG_DENSITY_PENALTY_THRESHOLD"), default=300),
-            rag_density_boost_threshold=_parse_int(os.getenv("RAG_DENSITY_BOOST_THRESHOLD"), default=1000),
-            rag_density_penalty_multiplier=_parse_float(os.getenv("RAG_DENSITY_PENALTY_MULTIPLIER"), default=0.5),
-            rag_density_boost_multiplier=_parse_float(os.getenv("RAG_DENSITY_BOOST_MULTIPLIER"), default=1.2),
-            rag_cooccurrence_multiplier=_parse_float(os.getenv("RAG_COOCCURRENCE_MULTIPLIER"), default=1.5),
+            rag_article_max_tokens=_parse_int(
+                os.getenv("RAG_ARTICLE_MAX_TOKENS"), default=256),
+            rag_density_penalty_threshold=_parse_int(
+                os.getenv("RAG_DENSITY_PENALTY_THRESHOLD"), default=300),
+            rag_density_boost_threshold=_parse_int(
+                os.getenv("RAG_DENSITY_BOOST_THRESHOLD"), default=1000),
+            rag_density_penalty_multiplier=_parse_float(
+                os.getenv("RAG_DENSITY_PENALTY_MULTIPLIER"), default=0.5),
+            rag_density_boost_multiplier=_parse_float(
+                os.getenv("RAG_DENSITY_BOOST_MULTIPLIER"), default=1.2),
+            rag_cooccurrence_multiplier=_parse_float(
+                os.getenv("RAG_COOCCURRENCE_MULTIPLIER"), default=1.5),
             # RAG retrieval counts
-            rag_retrieval_news=_parse_int(os.getenv("RAG_RETRIEVAL_NEWS"), default=3),
-            rag_retrieval_macro=_parse_int(os.getenv("RAG_RETRIEVAL_MACRO"), default=1),
-            rag_retrieval_memory=_parse_int(os.getenv("RAG_RETRIEVAL_MEMORY"), default=2),
+            rag_retrieval_news=_parse_int(
+                os.getenv("RAG_RETRIEVAL_NEWS"), default=3),
+            rag_retrieval_macro=_parse_int(
+                os.getenv("RAG_RETRIEVAL_MACRO"), default=1),
+            rag_retrieval_memory=_parse_int(
+                os.getenv("RAG_RETRIEVAL_MEMORY"), default=2),
         )
 
     def ohlcv_csv_path(self, symbol: str, interval: str) -> str:
@@ -617,7 +721,8 @@ class Settings:
             raise ValueError("futures_leverage must be between 1 and 125")
 
         if self.ml_timeframe not in {"1m", "5m", "15m", "30m", "1h", "4h"}:
-            raise ValueError("ml_timeframe must be one of: 1m, 5m, 15m, 30m, 1h, 4h")
+            raise ValueError(
+                "ml_timeframe must be one of: 1m, 5m, 15m, 30m, 1h, 4h")
 
         if self.binance_product not in {"spot", "usdt_futures"}:
             raise ValueError("binance_product")
@@ -626,7 +731,8 @@ class Settings:
             raise ValueError("max_order_usdt")
 
         if self.bot_interval_seconds < 0:
-            raise ValueError("bot_interval_seconds must be >= 0 (0 = auto-align to candle)")
+            raise ValueError(
+                "bot_interval_seconds must be >= 0 (0 = auto-align to candle)")
 
 
 __all__ = ["Settings"]

@@ -16,7 +16,8 @@ class DeterministicEmbeddingFunction:
         vectors: list[list[float]] = []
         for text in input:
             digest = hashlib.sha256(text.encode("utf-8")).digest()
-            vector = [int.from_bytes(digest[index:index + 2], "big") / 65535.0 for index in range(0, 32, 2)]
+            vector = [int.from_bytes(
+                digest[index:index + 2], "big") / 65535.0 for index in range(0, 32, 2)]
             vectors.append(vector)
         return vectors
 
@@ -61,7 +62,8 @@ class ChromaStore:
         return int(self.collections[collection_name].count())
 
     def exists(self, collection_name: str, document_id: str) -> bool:
-        result = self.collections[collection_name].get(ids=[document_id], include=[])
+        result = self.collections[collection_name].get(
+            ids=[document_id], include=[])
         return bool(result.get("ids"))
 
     def add_document(
@@ -93,7 +95,8 @@ class ChromaStore:
         dimension = len(sample_vector)
         model_name = getattr(self._embedding_function, "model_name", None)
         base = model_name or self._embedding_function.__class__.__name__
-        slug = re.sub(r"[^a-z0-9]+", "_", str(base).lower()).strip("_") or "default"
+        slug = re.sub(r"[^a-z0-9]+", "_", str(base).lower()
+                      ).strip("_") or "default"
         return f"{slug}_{dimension}"
 
     def _physical_collection_name(self, collection_name: str) -> str:
@@ -109,4 +112,5 @@ class ChromaStore:
             probe.write_text("ok", encoding="utf-8")
             probe.unlink()
         except OSError as exc:
-            raise RuntimeError(f"ChromaDB path is not writable: {self.path}") from exc
+            raise RuntimeError(
+                f"ChromaDB path is not writable: {self.path}") from exc
