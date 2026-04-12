@@ -30,6 +30,12 @@ _REGIME_MULTIPLIERS = {
     "ACCUMULATION": {"long": 0.7, "short": 0.7},
 }
 
+# When |trend| crosses this threshold the scorer enters "trend-following mode":
+# contrarian indicators (RSI/MACD/double-bottom) get inverted so the system
+# can SELL into a confirmed downtrend instead of repeatedly buying the dip.
+# Below the threshold the original mean-reversion behaviour is preserved.
+_TREND_LOCK_THRESHOLD = 0.7
+
 
 class SignalScorer:
     """Compute a composite score from all available signals and return a TradeDecision."""
@@ -91,6 +97,25 @@ class SignalScorer:
 
         # 6. Key level proximity
         components["key_levels"] = self._score_key_levels(price, symbol)
+
+        # --- Regime-gated mean-reversion vs trend-following ---
+        # In a confirmed trend (|trend| >= 0.7), contrarian RSI/MACD/Signal
+        # readings are *exit* signals, not entries. Flip their sign so the
+        # composite can produce a SELL in a downtrend (the production logs
+        # showed 0 SELLs across 873 cycles in a clear downtrend because the
+        # contrarian components kept producing weak BUYs that the trend
+        # filter could only neutralise to HOLD).
+        trend_strength = abs(components["trend"])
+        if trend_strength >= _TREND_LOCK_THRESHOLD:
+            trend_sign = 1.0 if components["trend"] > 0 else -1.0
+            for k in ("signal", "momentum"):
+                v = components[k]
+                if v != 0 and (v > 0) != (trend_sign > 0):
+                    components[k] = -v
+            # Decay the contrarian-style "signal" component proportional to
+            # how locked-in the trend is, so a weak counter-trend BUY can no
+            # longer dominate a strong trend reading.
+            components["signal"] *= max(0.0, 1.0 - trend_strength)
 
         # --- Weighted composite ---
         # When the direction classifier is unavailable, redistribute its weight

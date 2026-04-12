@@ -273,11 +273,7 @@ class Executor:
             if not oid:
                 continue
             try:
-                if oid.startswith("algo:"):
-                    strategy_id = int(oid[len("algo:"):])
-                    client.cancel_algo_order(strategy_id)
-                else:
-                    client.cancel_order(symbol, int(oid))
+                client.cancel_order(symbol, int(oid))
                 logger.info("Cancelled %s bracket order %s for %s", label, oid, symbol)
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
@@ -296,118 +292,91 @@ class Executor:
         quantity: float,
         label: str,
     ) -> str | None:
-        """Place a single futures bracket order (SL or TP).
+        """Place a single futures bracket order (SL or TP) on Binance UM.
 
-        Fallback chain (each step tried only if the previous returns -4120):
-          1. STOP_MARKET / TAKE_PROFIT_MARKET with ``closePosition=true``  (mainnet)
-          2. STOP_MARKET / TAKE_PROFIT_MARKET with ``reduceOnly=true`` + qty  (demo-fapi)
-          3. STOP / TAKE_PROFIT limit with ``reduceOnly=true`` + 0.5 % price offset
-          4. Algo Order API
+        Strategy:
+          1. STOP_MARKET / TAKE_PROFIT_MARKET with ``closePosition=true`` and
+             ``workingType=MARK_PRICE`` (avoids transient -4120 from contract
+             price wicks on testnet).
+          2. On -4061 (position-side mismatch — hedge mode is on), retry with
+             explicit ``positionSide`` derived from the entry side.
+          3. On -4131 / "reduceOnly Order is rejected" (closePosition not
+             accepted on this endpoint), retry once with ``reduceOnly=true``
+             + quantity.
+          4. Anything else: log the full context loudly so the next live run
+             surfaces a real diagnostic instead of silently dropping the SL.
+
+        The deprecated ``/fapi/v1/order/algo/*`` paths used to live here as a
+        final fallback. They do not exist on Binance UM Futures and only
+        produced misleading -5000 errors — removed entirely.
         """
-        qty_str = await self._format_quantity(symbol, quantity, client)
+        qty_str = await self._format_quantity(symbol, quantity, client) if quantity > 0 else None
+        # Mirror the entry side: if we entered LONG (BUY), the bracket closes
+        # LONG, which in hedge mode requires positionSide=LONG.
+        position_side = "LONG" if side == "SELL" else "SHORT"
 
-        # --- Attempt 1: market type with closePosition ---
-        try:
-            data = client.create_order(
-                symbol=symbol,
-                side=side,
-                type=market_type,
-                stopPrice=stop_str,
-                closePosition="true",
-            )
-            oid = str(data.get("orderId", "")) or None
-            logger.info(
-                "Futures %s bracket placed: %s type=%s stopPrice=%s order=%s",
-                label, symbol, market_type, stop_str, oid,
-            )
-            return oid
-        except Exception as exc:  # noqa: BLE001
-            if "-4120" not in str(exc):
-                logger.error("Failed to place futures %s bracket for %s: %s", label, symbol, exc)
-                return None
-            logger.info(
-                "%s not supported on this endpoint for %s — falling back to %s with reduceOnly",
-                market_type, symbol, market_type,
-            )
+        base_params: dict[str, Any] = {
+            "symbol": symbol,
+            "side": side,
+            "type": market_type,
+            "stopPrice": stop_str,
+            "workingType": "MARK_PRICE",
+            "priceProtect": "TRUE",
+        }
 
-        # --- Attempt 2: market type with reduceOnly + quantity (demo-fapi) ---
-        try:
-            data = client.create_order(
-                symbol=symbol,
-                side=side,
-                type=market_type,
-                stopPrice=stop_str,
-                quantity=qty_str,
-                reduceOnly="true",
-            )
-            oid = str(data.get("orderId", "")) or None
-            logger.info(
-                "Futures %s bracket placed: %s type=%s stopPrice=%s qty=%s order=%s",
-                label, symbol, market_type, stop_str, qty_str, oid,
-            )
-            return oid
-        except Exception as exc:  # noqa: BLE001
-            if "-4120" not in str(exc):
-                logger.error("Failed to place futures %s bracket (reduceOnly) for %s: %s", label, symbol, exc)
-                return None
-            logger.info(
-                "%s reduceOnly not supported on this endpoint for %s — falling back to %s",
-                market_type, symbol, limit_type,
-            )
-
-        # --- Attempt 3: STOP / TAKE_PROFIT with reduceOnly + limit price ---
-        try:
-            offset = 0.005  # 0.5 % worse than trigger for fill safety
-            if side == "SELL":
-                limit_price = trigger_price * (1 - offset)
-            else:
-                limit_price = trigger_price * (1 + offset)
-            limit_str = await self._format_price(symbol, limit_price, client)
-            data = client.create_order(
-                symbol=symbol,
-                side=side,
-                type=limit_type,
-                stopPrice=stop_str,
-                price=limit_str,
-                quantity=qty_str,
-                reduceOnly="true",
-                timeInForce="GTC",
-            )
-            oid = str(data.get("orderId", "")) or None
-            logger.info(
-                "Futures %s bracket placed: %s type=%s stopPrice=%s price=%s qty=%s order=%s",
-                label, symbol, limit_type, stop_str, limit_str, qty_str, oid,
-            )
-            return oid
-        except Exception as exc:  # noqa: BLE001
-            if "-4120" not in str(exc):
-                logger.error("Failed to place futures %s bracket (%s fallback) for %s: %s", label, limit_type, symbol, exc)
-                return None
-            logger.info(
-                "%s not supported on this endpoint for %s — falling back to Algo Order API",
-                limit_type, symbol,
-            )
-
-        # --- Attempt 4: Algo Order API ---
-        try:
-            if label == "SL":
-                data = client.create_algo_sl_order(
-                    symbol=symbol, side=side, stop_price=stop_str, close_position=True,
+        def _try(params: dict[str, Any], variant: str) -> tuple[str | None, str | None]:
+            try:
+                data = client.create_order(**params)
+                oid = str(data.get("orderId", "")) or None
+                logger.info(
+                    "Futures %s bracket placed (%s): %s type=%s stopPrice=%s order=%s",
+                    label, variant, symbol, market_type, stop_str, oid,
                 )
-            else:
-                data = client.create_algo_tp_order(
-                    symbol=symbol, side=side, stop_price=stop_str, close_position=True,
-                )
-            strategy_id = str(data.get("strategyId", "")) or None
-            oid = f"algo:{strategy_id}" if strategy_id else None
-            logger.info(
-                "Futures %s bracket placed via Algo API: %s stopPrice=%s strategyId=%s",
-                label, symbol, stop_str, strategy_id,
-            )
+                return oid, None
+            except Exception as exc:  # noqa: BLE001
+                return None, str(exc)
+
+        # --- Attempt 1: closePosition ---
+        params = {**base_params, "closePosition": "true"}
+        oid, err1 = _try(params, "closePosition")
+        if oid:
             return oid
-        except Exception as exc:  # noqa: BLE001
-            logger.error("Failed to place futures %s bracket (algo fallback) for %s: %s", label, symbol, exc)
-            return None
+
+        # --- Attempt 2: hedge mode? retry with positionSide ---
+        if "-4061" in (err1 or "") or "position side" in (err1 or "").lower():
+            params = {**base_params, "closePosition": "true", "positionSide": position_side}
+            oid, err2 = _try(params, f"closePosition+positionSide={position_side}")
+            if oid:
+                return oid
+            err1 = err2 or err1
+
+        # --- Attempt 3: reduceOnly + quantity (some endpoints reject closePosition) ---
+        if qty_str is not None:
+            params = {
+                **base_params,
+                "quantity": qty_str,
+                "reduceOnly": "true",
+            }
+            oid, err3 = _try(params, "reduceOnly")
+            if oid:
+                return oid
+            # Also try with positionSide if hedge mode
+            if "-4061" in (err3 or "") or "position side" in (err3 or "").lower():
+                params["positionSide"] = position_side
+                params.pop("reduceOnly", None)  # incompatible with positionSide in hedge mode
+                oid, err4 = _try(params, f"reduceOnly+positionSide={position_side}")
+                if oid:
+                    return oid
+                err1 = err4 or err3 or err1
+            else:
+                err1 = err3 or err1
+
+        logger.error(
+            "Failed to place futures %s bracket for %s — position is UNPROTECTED. "
+            "side=%s type=%s stopPrice=%s qty=%s last_error=%s",
+            label, symbol, side, market_type, stop_str, qty_str, err1,
+        )
+        return None
 
     async def get_live_position_size(self, symbol: str) -> float:
         """Return the absolute open position quantity on the exchange.

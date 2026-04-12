@@ -158,60 +158,6 @@ class BinanceRestClient:
         """Futures only: return current open interest for the symbol."""
         return self._request("GET", "/fapi/v1/openInterest", params={"symbol": symbol}, signed=False)
 
-    def create_algo_sl_order(
-        self,
-        symbol: str,
-        side: str,
-        stop_price: str,
-        quantity: str | None = None,
-        close_position: bool = False,
-    ) -> dict[str, Any]:
-        """Futures only: place a Stop-Loss via the Algo Order API (/fapi/v1/order/algo/stop)."""
-        params: dict[str, Any] = {
-            "symbol": symbol,
-            "side": side,
-            "stopPrice": stop_price,
-            "workingType": "CONTRACT_PRICE",
-            "priceProtect": "FALSE",
-        }
-        if close_position:
-            params["closePosition"] = "TRUE"
-        else:
-            params["quantity"] = quantity
-            params["reduceOnly"] = "TRUE"
-        return self._request("POST", "/fapi/v1/order/algo/stop", params=params, signed=True)
-
-    def create_algo_tp_order(
-        self,
-        symbol: str,
-        side: str,
-        stop_price: str,
-        quantity: str | None = None,
-        close_position: bool = False,
-    ) -> dict[str, Any]:
-        """Futures only: place a Take-Profit via the Algo Order API (/fapi/v1/order/algo/tp)."""
-        params: dict[str, Any] = {
-            "symbol": symbol,
-            "side": side,
-            "stopPrice": stop_price,
-            "workingType": "CONTRACT_PRICE",
-            "priceProtect": "FALSE",
-        }
-        if close_position:
-            params["closePosition"] = "TRUE"
-        else:
-            params["quantity"] = quantity
-            params["reduceOnly"] = "TRUE"
-        return self._request("POST", "/fapi/v1/order/algo/tp", params=params, signed=True)
-
-    def cancel_algo_order(self, strategy_id: int) -> dict[str, Any]:
-        """Futures only: cancel an algo SL/TP order by strategyId."""
-        return self._request(
-            "DELETE", "/fapi/v1/order/algo/cancel",
-            params={"strategyId": strategy_id},
-            signed=True,
-        )
-
     def _request(
         self,
         method: str,
