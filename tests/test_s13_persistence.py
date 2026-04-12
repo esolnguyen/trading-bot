@@ -78,7 +78,7 @@ def test_csv_header_written_only_once(tmp_path: Path) -> None:
     persistence.append_trade(outcome, "2026-03-25T00:05:00Z")
 
     rows = persistence.trades_csv_path.read_text(encoding="utf-8").splitlines()
-    assert rows[0].startswith("timestamp_iso,symbol,action")
+    assert rows[0].startswith("timestamp_iso,timeframe,symbol,action")
     assert len(rows) == 3
     assert "source" in rows[0]
 

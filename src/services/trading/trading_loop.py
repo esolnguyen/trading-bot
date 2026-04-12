@@ -116,7 +116,13 @@ class TradingLoop:
 
     async def run(self) -> None:
         """Run the trading loop until stopped."""
-        self.logger.info("trading loop started")
+        self.logger.info(
+            "trading loop started — timeframe=%s symbols=%s interval=%ss dry_run=%s",
+            self.settings.timeframe,
+            ",".join(self.settings.trading_symbols),
+            self.settings.effective_bot_interval(),
+            self.settings.bot_dry_run,
+        )
         self._webhook_trigger: bool = False
         _retry_delay = 30
         # Initialize executor: applies leverage and pre-warms exchange filters
@@ -151,6 +157,12 @@ class TradingLoop:
         """Execute one dry/live trading decision cycle."""
         self._cycle += 1
         timestamp_iso = datetime.now(timezone.utc).isoformat()
+        self.logger.info(
+            "=== Cycle %d start [tf=%s] symbols=%s ===",
+            self._cycle,
+            self.settings.timeframe,
+            ",".join(self.settings.trading_symbols),
+        )
 
         # Reset daily loss counter at UTC midnight
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")

@@ -22,6 +22,7 @@ class Persistence:
 
     CSV_HEADER = [
         "timestamp_iso",
+        "timeframe",
         "symbol",
         "action",
         "order_type",
@@ -35,8 +36,15 @@ class Persistence:
         "reasoning",
     ]
 
-    def __init__(self, log_dir: str | Path = "logs", data_dir: str | Path = "data") -> None:
-        self.log_dir = Path(log_dir)
+    def __init__(self, log_dir: str | Path = "logs", data_dir: str | Path = "data", timeframe: str = "") -> None:
+        base_log_dir = Path(log_dir)
+        self.timeframe = timeframe
+        # Organise logs into a timeframe subfolder so each preset
+        # (1m, 5m, 15m, 1h, 4h …) gets its own directory.
+        if timeframe:
+            self.log_dir = base_log_dir / timeframe
+        else:
+            self.log_dir = base_log_dir
         self.data_dir = Path(data_dir)
         self.trades_csv_path = self.log_dir / "trades.csv"
         self.bot_log_path = self.log_dir / "bot.log"
@@ -56,6 +64,7 @@ class Persistence:
             writer.writerow(
                 [
                     timestamp_iso,
+                    self.timeframe,
                     outcome.decision.symbol,
                     outcome.decision.action.value,
                     outcome.decision.order_type,
@@ -92,6 +101,7 @@ class Persistence:
     ) -> None:
         payload: dict[str, Any] = {
             "ts": timestamp_iso,
+            "timeframe": self.timeframe,
             "cycle": cycle,
             "symbol": symbol,
             "signal": analysis.signal.value,

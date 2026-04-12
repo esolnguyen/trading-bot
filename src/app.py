@@ -34,6 +34,40 @@ from src.services.trading import Executor, RiskManager, TradingLoop
 
 logger = logging.getLogger(__name__)
 
+_TIMEFRAME_FILE_HANDLER: logging.Handler | None = None
+
+
+def _attach_timeframe_file_handler(settings: Settings) -> None:
+    """Attach a per-timeframe file handler to the root logger.
+
+    Routes runtime logs to ``<log_dir>/<timeframe>/app.log`` so each preset
+    keeps its own log stream while still printing to the console.
+    """
+    global _TIMEFRAME_FILE_HANDLER
+    from pathlib import Path as _Path  # noqa: PLC0415
+
+    target_dir = _Path(settings.log_dir) / (settings.timeframe or "default")
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_path = target_dir / "app.log"
+
+    root = logging.getLogger()
+    if _TIMEFRAME_FILE_HANDLER is not None:
+        root.removeHandler(_TIMEFRAME_FILE_HANDLER)
+        try:
+            _TIMEFRAME_FILE_HANDLER.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+    handler = logging.FileHandler(target_path, encoding="utf-8")
+    handler.setFormatter(
+        logging.Formatter(
+            "%(asctime)s %(levelname)s [tf=" + (settings.timeframe or "?") + "] %(name)s: %(message)s"
+        )
+    )
+    handler.setLevel(root.level)
+    root.addHandler(handler)
+    _TIMEFRAME_FILE_HANDLER = handler
+
 
 def _try_build_vector_memory(store: ChromaStore) -> Any | None:
     """Build VectorMemoryService if the module is available."""
@@ -199,7 +233,18 @@ def build_runtime(settings: Settings) -> dict[str, Any]:
     llm = LLMManager(settings)
     executor = Executor(settings)
     memory = MemoryManager(store, settings=settings)
-    persistence = Persistence(data_dir="data")
+    persistence = Persistence(
+        log_dir=settings.log_dir,
+        data_dir=settings.data_dir,
+        timeframe=settings.timeframe,
+    )
+    _attach_timeframe_file_handler(settings)
+    logger.info(
+        "Logging into %s (timeframe=%s, symbols=%s)",
+        persistence.log_dir,
+        settings.timeframe,
+        ",".join(settings.trading_symbols),
+    )
     console_notifier = ConsoleNotifier()
     logger_notifier = LoggerNotifier(logger)
 
