@@ -13,6 +13,7 @@ from openai import AzureOpenAI
 from .config import LLMTraderConfig
 from .market_data import Candle, candles_to_csv
 from .models import OpenPosition
+from .skills_loader import load_skills
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +118,9 @@ class LLMDecisionEngine:
         csv_data = candles_to_csv(candles)
         position_section = _format_position(position)
         system_msg = _SYSTEM_PROMPT.format(n=len(candles), symbol=symbol)
+        skills_block = load_skills(self._cfg.skills)
+        if skills_block:
+            system_msg = f"{system_msg}\n\n{skills_block}"
         user_msg = _USER_PROMPT.format(
             symbol=symbol,
             position_section=position_section,

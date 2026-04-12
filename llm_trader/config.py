@@ -62,3 +62,40 @@ class LLMTraderConfig:
     interval_seconds: int = field(
         default_factory=lambda: int(os.getenv("LLM_TRADER_INTERVAL_SECONDS", "900"))
     )
+
+    # ── Skills (prompt-injected playbooks) ────────────────────────────────────
+    # Comma-separated list of skill names to inject into the system prompt.
+    # See llm_trader/skills/ for available names.
+    skills: list[str] = field(
+        default_factory=lambda: [
+            s.strip()
+            for s in os.getenv(
+                "LLM_TRADER_SKILLS",
+                "candlestick,technical-basic,smc,crypto-derivatives,perp-funding-basis",
+            ).split(",")
+            if s.strip()
+        ]
+    )
+
+    # ── Backtest ──────────────────────────────────────────────────────────────
+    backtest_initial_cash: float = field(
+        default_factory=lambda: float(os.getenv("LLM_TRADER_BT_CASH", "10000"))
+    )
+    backtest_taker_fee: float = field(
+        default_factory=lambda: float(os.getenv("LLM_TRADER_BT_TAKER_FEE", "0.0005"))
+    )
+    backtest_maker_fee: float = field(
+        default_factory=lambda: float(os.getenv("LLM_TRADER_BT_MAKER_FEE", "0.0002"))
+    )
+    backtest_slippage: float = field(
+        default_factory=lambda: float(os.getenv("LLM_TRADER_BT_SLIPPAGE", "0.0005"))
+    )
+    backtest_funding_rate: float = field(
+        default_factory=lambda: float(os.getenv("LLM_TRADER_BT_FUNDING_RATE", "0.0001"))
+    )
+    # How often (in bars) to call the LLM during backtest. 1 = every bar
+    # (slow + expensive), 16 = every ~4h on 15m candles. Between calls the
+    # last decision's SL/TP still apply.
+    backtest_eval_every_n_bars: int = field(
+        default_factory=lambda: int(os.getenv("LLM_TRADER_BT_EVAL_EVERY", "16"))
+    )
