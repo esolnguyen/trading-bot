@@ -7,16 +7,17 @@ An AI-assisted cryptocurrency trading bot that trades on Binance using LLM-power
 Each trading cycle runs the following pipeline:
 
 ```
-1. Market Data       BinanceFeed fetches OHLCV candles, funding rate, open interest
-2. Technical Analysis IndicatorCalculator → RSI, MACD, BB, EMA, ADX, ATR, OBV, Choppiness
-3. Pattern Detection  PatternAnalyzer → double top/bottom, S/R levels, engulfing candles
-4. RAG Context        RAGRetriever queries ChromaDB → news, macro data, fear/greed, TVL
-5. Context Assembly   ContextBuilder merges all signals into a structured LLM prompt
-6. LLM Decision       LLMManager.decide() → TradeDecision (action, symbol, qty, confidence)
-7. Risk Validation    RiskManager → kill switches, position sizing, correlated pair guard
-8. Execution          Executor places order on Binance (or simulates in dry-run mode)
-9. Position Mgmt      TradingStrategy tracks open positions, stop-loss / take-profit
-10. Learning          TradingBrainService stores outcomes in vector memory for future cycles
+1.  Market Data        BinanceFeed fetches OHLCV candles, funding rate, open interest
+2.  Technical Analysis IndicatorCalculator → RSI, MACD, BB, EMA, ADX, ATR, OBV, Choppiness
+3.  Pattern Detection  PatternAnalyzer → double top/bottom, S/R levels, engulfing candles
+4.  ML Enrichment      Direction / regime / anomaly / outcome classifiers + signal scorer
+5.  RAG Context        RAGRetriever queries ChromaDB → news, macro data, fear/greed, TVL
+6.  Context Assembly   ContextBuilder merges all signals into a structured LLM prompt
+7.  LLM Decision       LLMManager.decide() → TradeDecision (action, symbol, qty, confidence)
+8.  Risk Validation    RiskManager → kill switches, futures-aware sizing, re-entry cooldown
+9.  Execution          Executor places order on Binance (or simulates in dry-run mode)
+10. Position Mgmt      TradingStrategy tracks stops, trailing stops, partial take-profit
+11. Learning           TradingBrainService stores outcomes in vector memory for future cycles
 ```
 
 The LLM is the single decision-maker. Indicators and ML outputs are translated into semantic language and fed as context — they never compete with or override the LLM. The risk manager enforces hard safety gates in Python.
@@ -34,16 +35,30 @@ src/
 ├── services/                # Business logic and orchestration
 │   ├── analysis/            # IndicatorCalculator, TechnicalAnalyzer, PatternAnalyzer, ChartGenerator
 │   │   └── indicators/      # Modular indicator library (momentum, trend, volatility, volume)
+│   ├── ml/                  # Direction/regime/anomaly/outcome classifiers, key-level detector,
+│   │                        #   historical percentile, sentiment scorer
 │   ├── rag/                 # IngestionLoop, RAGRetriever, MemoryManager, data sources
-│   └── trading/             # TradingLoop, Executor, RiskManager, TradingStrategy, BrainService
+│   └── trading/             # TradingLoop, Executor, RiskManager, TradingStrategy, BrainService,
+│                            #   SignalScorer, StatisticsService
 ├── infrastructure/          # External system adapters
 │   ├── ai/                  # LLM providers (Azure, Google, OpenRouter, LM Studio, BlockRun)
 │   ├── binance/             # Direct REST client (no ccxt dependency)
-│   ├── ml/                  # ML context enrichers (percentile scorer, multi-timeframe)
+│   ├── ml/                  # ModelStore — loads joblib classifiers from models/
 │   └── storage/             # ChromaDB vector store, file-based persistence
 ├── interfaces/notifiers/    # Output adapters (console, logger, Discord)
 ├── contracts/               # Protocol/interface definitions
 └── shared/                  # Generic utilities (formatting, token counting, decorators)
+
+scripts/                     # Offline tooling (not part of the runtime loop)
+├── backtest.py              # Replay historical candles through the strategy
+├── backfill_ohlcv.py        # Seed ChromaDB / model training data
+├── train_direction.py       # XGBoost direction classifier
+├── train_regime.py          # Regime classifier
+├── train_anomaly.py         # Isolation-forest anomaly detector
+├── train_outcome.py         # Trade-outcome predictor
+├── fit_key_levels.py        # Support/resistance level fitter
+├── retrain_all.py           # Runs every trainer end-to-end
+└── apply_preset.py          # Apply a saved config preset to .env
 ```
 
 ## Technical Indicators
@@ -87,7 +102,7 @@ Configured via the `PROVIDER` env var. Supported values:
 ### 1. Clone and install
 
 ```bash
-git clone <repo-url>
+git clone git@github.com:esolnguyen/trading_bot.git bot
 cd bot
 pip install -r requirements.txt
 ```
@@ -175,6 +190,7 @@ BOT_DRY_RUN=false BOT_ENABLED=true python -m src.app
 | `DEFAULT_STOP_LOSS_PCT` | `0.02` | Default stop-loss distance (2%) |
 | `DEFAULT_TAKE_PROFIT_PCT` | `0.04` | Default take-profit distance (4%) |
 | `DEFAULT_POSITION_SIZE` | `0.02` | Default position size as fraction of capital |
+| `REENTRY_COOLDOWN_CYCLES` | `3` | Cycles to wait after a closed position before re-entering the same symbol |
 
 ### Trailing Stop
 
@@ -219,6 +235,15 @@ BOT_DRY_RUN=false BOT_ENABLED=true python -m src.app
 | `data/position_{symbol}.json` | Open positions (survives restarts) |
 | `logs/trades.csv` | Full trade history log |
 | `chroma_db/` | Vector embeddings for RAG and brain memory |
+| `models/` | Trained joblib classifiers (direction, regime, anomaly) and key-level caches |
+
+## Backtesting
+
+Replay the strategy against historical candles without placing orders:
+
+```bash
+python3 scripts/backtest.py --csv data/ohlcv/btcusdt_15m.csv --symbol BTCUSDT
+```
 
 ## Tests
 
@@ -226,4 +251,4 @@ BOT_DRY_RUN=false BOT_ENABLED=true python -m src.app
 python3 -m pytest tests/ -q
 ```
 
-70 tests. ChromaDB pydantic deprecation warnings are harmless.
+91 tests. ChromaDB pydantic deprecation warnings are harmless.
