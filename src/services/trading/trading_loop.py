@@ -970,7 +970,8 @@ class TradingLoop:
         try:
             import csv as _csv  # noqa: PLC0415
             from pathlib import Path as _Path  # noqa: PLC0415
-            daily_path = _Path(self.settings.ohlcv_csv_path(self.settings.crypto_pair, "1d"))
+            _symbols = self.settings.trading_symbols or ["BTCUSDT"]
+            daily_path = _Path(self.settings.ohlcv_csv_path(_symbols[0], "1d"))
             if not daily_path.exists():
                 return
             rows: list[dict] = []

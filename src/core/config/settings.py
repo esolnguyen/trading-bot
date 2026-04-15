@@ -12,6 +12,14 @@ from dotenv import load_dotenv
 _VALID_PROVIDERS = frozenset(
     {"azure", "googleai", "openrouter", "local", "blockrun", "all"})
 
+_VALID_BOT_MODES = frozenset({"off", "dry_run", "live"})
+
+# Decision-engine options for the main trading loop:
+#   scorer       — deterministic signal scorer (no LLM calls)
+#   llm_skills   — LLM with playbook skills + chart only (no indicators/ML/RAG)
+#   llm_enriched — LLM with skills + indicators + ML + RAG (full context)
+_VALID_TRADING_ENGINES = frozenset({"scorer", "llm_skills", "llm_enriched"})
+
 
 def _parse_bool(raw_value: str | None, *, default: bool) -> bool:
     """Parse a boolean environment variable with a safe default."""
@@ -46,6 +54,44 @@ def _parse_list(raw_value: str | None, *, default: list[str]) -> list[str]:
     if raw_value is None or raw_value.strip() == "":
         return default
     return [item.strip() for item in raw_value.split(",") if item.strip()]
+
+
+def _parse_trading_engine(raw_value: str | None) -> str:
+    """Parse TRADING_ENGINE into one of {scorer, llm_skills, llm_enriched}.
+
+    Falls back to legacy USE_SIGNAL_SCORER when TRADING_ENGINE is unset:
+    true → scorer, false → llm_enriched.
+    """
+    if raw_value is not None and raw_value.strip() != "":
+        engine = raw_value.strip().lower().replace("-", "_")
+        if engine not in _VALID_TRADING_ENGINES:
+            raise ValueError(
+                "TRADING_ENGINE must be one of: scorer, llm_skills, llm_enriched "
+                f"(got {raw_value!r})")
+        return engine
+
+    legacy_scorer = _parse_bool(os.getenv("USE_SIGNAL_SCORER"), default=False)
+    return "scorer" if legacy_scorer else "llm_enriched"
+
+
+def _parse_bot_mode(raw_value: str | None) -> str:
+    """Parse BOT_MODE into one of {off, dry_run, live}.
+
+    Falls back to the legacy BOT_ENABLED / BOT_DRY_RUN pair when BOT_MODE is
+    unset, so existing deployments keep working during migration.
+    """
+    if raw_value is not None and raw_value.strip() != "":
+        mode = raw_value.strip().lower().replace("-", "_")
+        if mode not in _VALID_BOT_MODES:
+            raise ValueError(
+                f"BOT_MODE must be one of: off, dry_run, live (got {raw_value!r})")
+        return mode
+
+    legacy_enabled = _parse_bool(os.getenv("BOT_ENABLED"), default=False)
+    legacy_dry_run = _parse_bool(os.getenv("BOT_DRY_RUN"), default=True)
+    if not legacy_enabled:
+        return "off"
+    return "dry_run" if legacy_dry_run else "live"
 
 
 @dataclass(repr=False)
@@ -84,9 +130,25 @@ class Settings:
     # Set BOT_INTERVAL_SECONDS=0 in .env to enable auto-alignment.
     bot_interval_seconds: int = 0
     max_order_usdt: float = 50.0
-    bot_enabled: bool = False
-    bot_dry_run: bool = True
+    # BOT_MODE: "off" (master kill — always HOLD), "dry_run" (simulate orders),
+    # "live" (place real orders). Replaces old BOT_ENABLED / BOT_DRY_RUN pair.
+    bot_mode: str = "off"
     model_supports_vision: bool = False
+
+    @property
+    def bot_enabled(self) -> bool:
+        """True when bot_mode allows decisions through (dry_run or live)."""
+        return self.bot_mode in {"dry_run", "live"}
+
+    @property
+    def bot_dry_run(self) -> bool:
+        """True when orders should be simulated instead of placed."""
+        return self.bot_mode != "live"
+
+    @property
+    def use_signal_scorer(self) -> bool:
+        """Legacy alias: True when the scorer engine is active."""
+        return self.trading_engine == "scorer"
 
     # Seconds per candle for each supported timeframe (used by auto-alignment).
     _CANDLE_SECONDS: dict[str, int] = field(default_factory=lambda: {
@@ -162,7 +224,6 @@ class Settings:
     # ------------------------------------------------------------------ #
     # Trading parameters
     # ------------------------------------------------------------------ #
-    crypto_pair: str = "BTC/USDT"
     timeframe: str = "1h"
     candle_limit: int = 200
     ai_chart_candle_limit: int = 120
@@ -302,9 +363,19 @@ class Settings:
     futures_leverage: int = 1
 
     # ------------------------------------------------------------------ #
-    # Signal Scorer (deterministic engine — replaces LLM when enabled)
+    # Trading engine — which decision path drives the main loop
     # ------------------------------------------------------------------ #
-    use_signal_scorer: bool = False          # True = scorer, False = LLM
+    #   scorer       → deterministic signal scorer (no LLM calls)
+    #   llm_skills   → LLM with playbook skills + chart only
+    #   llm_enriched → LLM with skills + indicators + ML + RAG (default)
+    trading_engine: str = "llm_enriched"
+    # Comma-separated skills injected into the LLM system prompt for both
+    # llm_skills and llm_enriched engines. See src/services/llm_trader/skills/.
+    trader_skills: list[str] = field(default_factory=lambda: [
+        "candlestick", "technical-basic", "smc",
+        "crypto-derivatives", "perp-funding-basis",
+    ])
+
     scoring_entry_threshold: float = 0.30    # minimum |score| to open a position
     scoring_exit_threshold: float = 0.20     # minimum |score| to close on reversal
     # Component weights (should roughly sum to 1.0)
@@ -381,9 +452,7 @@ class Settings:
             f"binance_testnet={self.binance_testnet!r}, "
             f"bot_interval_seconds={self.bot_interval_seconds!r}, "
             f"max_order_usdt={self.max_order_usdt!r}, "
-            f"bot_enabled={self.bot_enabled!r}, "
-            f"bot_dry_run={self.bot_dry_run!r}, "
-            f"crypto_pair={self.crypto_pair!r}, "
+            f"bot_mode={self.bot_mode!r}, "
             f"timeframe={self.timeframe!r}, "
             f"discord_bot_enabled={self.discord_bot_enabled!r}"
             ")"
@@ -393,6 +462,14 @@ class Settings:
     def from_env(cls, env_file: str | None = None) -> "Settings":
         """Load settings from the environment and optional .env file."""
         load_dotenv(dotenv_path=env_file, override=False)
+
+        bot_mode = _parse_bot_mode(os.getenv("BOT_MODE"))
+        trading_engine = _parse_trading_engine(os.getenv("TRADING_ENGINE"))
+        trader_skills = _parse_list(
+            os.getenv("TRADER_SKILLS") or os.getenv("LLM_TRADER_SKILLS"),
+            default=["candlestick", "technical-basic", "smc",
+                     "crypto-derivatives", "perp-funding-basis"],
+        )
 
         admin_ids = _parse_list(os.getenv("ADMIN_USER_IDS"), default=[])
         parsed_admin_ids: list[int] = []
@@ -422,8 +499,7 @@ class Settings:
                 os.getenv("BOT_INTERVAL_SECONDS"), default=0),
             max_order_usdt=_parse_float(
                 os.getenv("MAX_ORDER_USDT"), default=50.0),
-            bot_enabled=_parse_bool(os.getenv("BOT_ENABLED"), default=False),
-            bot_dry_run=_parse_bool(os.getenv("BOT_DRY_RUN"), default=True),
+            bot_mode=bot_mode,
             model_supports_vision=_parse_bool(
                 os.getenv("MODEL_SUPPORTS_VISION"), default=False),
             # RAG / ChromaDB
@@ -487,7 +563,6 @@ class Settings:
             google_code_execution=_parse_bool(
                 os.getenv("GOOGLE_CODE_EXECUTION"), default=False),
             # Trading parameters
-            crypto_pair=os.getenv("CRYPTO_PAIR", "BTC/USDT").strip(),
             timeframe=os.getenv("TIMEFRAME", "1h").strip(),
             candle_limit=_parse_int(os.getenv("CANDLE_LIMIT"), default=200),
             ai_chart_candle_limit=_parse_int(
@@ -578,9 +653,9 @@ class Settings:
             # Futures leverage
             futures_leverage=_parse_int(
                 os.getenv("FUTURES_LEVERAGE"), default=1),
-            # Signal Scorer
-            use_signal_scorer=_parse_bool(
-                os.getenv("USE_SIGNAL_SCORER"), default=False),
+            # Trading engine
+            trading_engine=trading_engine,
+            trader_skills=trader_skills,
             scoring_entry_threshold=_parse_float(
                 os.getenv("SCORING_ENTRY_THRESHOLD"), default=0.30),
             scoring_exit_threshold=_parse_float(
@@ -716,6 +791,15 @@ class Settings:
     def _validate_ranges(self) -> None:
         if self.provider not in _VALID_PROVIDERS:
             raise ValueError("provider")
+
+        if self.bot_mode not in _VALID_BOT_MODES:
+            raise ValueError(
+                f"bot_mode must be one of: off, dry_run, live (got {self.bot_mode!r})")
+
+        if self.trading_engine not in _VALID_TRADING_ENGINES:
+            raise ValueError(
+                "trading_engine must be one of: scorer, llm_skills, llm_enriched "
+                f"(got {self.trading_engine!r})")
 
         if not (1 <= self.futures_leverage <= 125):
             raise ValueError("futures_leverage must be between 1 and 125")

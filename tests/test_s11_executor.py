@@ -17,7 +17,7 @@ def build_settings(**overrides) -> Settings:
         binance_api_key="binance-key-1234",
         binance_api_secret="binance-secret-1234",
         cryptocompare_api_key="cc-key-1234",
-        bot_enabled=True,
+        bot_mode="live",
     )
     base.update(overrides)
     return Settings(**base)

@@ -166,8 +166,7 @@ async def test_dry_trading_cycle_logs_without_real_trade(tmp_path: Path) -> None
         binance_api_key="binance-key-1234",
         binance_api_secret="binance-secret-1234",
         cryptocompare_api_key="cc-key-1234",
-        bot_enabled=True,
-        bot_dry_run=True,
+        bot_mode="dry_run",
         bot_interval_seconds=60,
     )
     loop = TradingLoop(

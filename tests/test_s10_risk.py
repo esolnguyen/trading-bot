@@ -10,6 +10,12 @@ from src.services.trading import RiskManager
 
 
 def build_settings(*, bot_enabled: bool = True, bot_dry_run: bool = False, max_order_usdt: float = 50.0) -> Settings:
+    if not bot_enabled:
+        mode = "off"
+    elif bot_dry_run:
+        mode = "dry_run"
+    else:
+        mode = "live"
     return Settings(
         azure_endpoint="https://example-resource.openai.azure.com",
         azure_api_key="azure-key-1234",
@@ -17,8 +23,7 @@ def build_settings(*, bot_enabled: bool = True, bot_dry_run: bool = False, max_o
         binance_api_key="binance-key-1234",
         binance_api_secret="binance-secret-1234",
         cryptocompare_api_key="cc-key-1234",
-        bot_enabled=bot_enabled,
-        bot_dry_run=bot_dry_run,
+        bot_mode=mode,
         max_order_usdt=max_order_usdt,
     )
 
@@ -45,7 +50,7 @@ def test_bot_enabled_false_always_returns_hold(caplog) -> None:
 
     assert result.decision.action is Action.HOLD
     assert result.status == "blocked"
-    assert "BOT_ENABLED is false" in caplog.text
+    assert "BOT_MODE=off" in caplog.text
 
 
 def test_bot_dry_run_true_allows_decision_through() -> None:

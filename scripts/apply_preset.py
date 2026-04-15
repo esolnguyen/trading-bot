@@ -22,7 +22,9 @@ ROOT = Path(__file__).parent.parent
 PRESETS_FILE = ROOT / "config" / "presets.json"
 ENV_FILE = ROOT / ".env"
 
-# Keys that are never touched — credentials, infra, platform-specific
+# Keys that are never touched — credentials, infra, platform-specific.
+# BOT_MODE / USE_SIGNAL_SCORER stay with the user's strategic choice;
+# leverage + scoring tuning come from presets.
 _PROTECTED_KEYS = {
     "AZURE_ENDPOINT", "AZURE_API_KEY", "AZURE_DEPLOYMENT", "AZURE_API_VERSION",
     "BINANCE_API_KEY", "BINANCE_API_SECRET", "BINANCE_TESTNET", "BINANCE_PRODUCT",
@@ -30,8 +32,9 @@ _PROTECTED_KEYS = {
     "GOOGLE_STUDIO_API_KEY", "OPENROUTER_API_KEY", "BLOCKRUN_WALLET_KEY",
     "BOT_TOKEN_DISCORD", "GUILD_ID_DISCORD", "MAIN_CHANNEL_ID",
     "TOKENIZERS_PARALLELISM", "OMP_NUM_THREADS",
-    "BOT_ENABLED", "BOT_DRY_RUN", "MAX_ORDER_USDT",
+    "BOT_MODE", "TRADING_ENGINE", "TRADER_SKILLS", "MAX_ORDER_USDT",
     "CHROMA_PATH", "PROVIDER", "MODEL_SUPPORTS_VISION",
+    "TRADING_SYMBOLS", "SINGLE_SYMBOL_DECISION",
 }
 
 

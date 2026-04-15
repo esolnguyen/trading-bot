@@ -176,8 +176,7 @@ def main() -> None:
     if args.symbol:
         symbols = [args.symbol.replace("/", "").upper()]
     else:
-        symbols = [s.upper() for s in settings.trading_symbols] if settings.trading_symbols else \
-                  [settings.crypto_pair.replace("/", "").upper()]
+        symbols = [s.upper() for s in settings.trading_symbols] if settings.trading_symbols else ["BTCUSDT"]
 
     if args.all:
         intervals = list(_ML_TIMEFRAMES) + ["1d"]

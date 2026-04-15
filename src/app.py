@@ -141,7 +141,7 @@ def _try_build_trading_strategy(
             TradingStrategy,
         )  # noqa: PLC0415
 
-        symbol = getattr(settings, "crypto_pair", "BTCUSDT")
+        symbol = settings.trading_symbols[0] if settings.trading_symbols else "BTCUSDT"
         return TradingStrategy(
             logger=logger,
             persistence=persistence,
@@ -249,19 +249,21 @@ def build_runtime(settings: Settings) -> dict[str, Any]:
     logger_notifier = LoggerNotifier(logger)
 
     # ML services — all optional, degrade gracefully if model files missing
+    _primary_symbol = settings.trading_symbols[0] if settings.trading_symbols else "BTCUSDT"
     percentile_scorer = HistoricalPercentileScorer(
-        csv_path=settings.ohlcv_csv_path(settings.crypto_pair, settings.ml_timeframe),
+        csv_path=settings.ohlcv_csv_path(_primary_symbol, settings.ml_timeframe),
         timeframe=settings.ml_timeframe,
     )
     # Build per-symbol percentile scorers so every traded symbol gets
     # its own rolling 6-month history context.
     per_symbol_scorers: dict[str, HistoricalPercentileScorer] = {}
     for _sym in settings.trading_symbols:
-        _path = settings.ohlcv_csv_path(_sym, settings.ml_timeframe)
-        if _path != settings.ohlcv_csv_path(settings.crypto_pair, settings.ml_timeframe):
-            per_symbol_scorers[_sym.upper()] = HistoricalPercentileScorer(
-                csv_path=_path, timeframe=settings.ml_timeframe
-            )
+        if _sym.upper() == _primary_symbol.upper():
+            continue
+        per_symbol_scorers[_sym.upper()] = HistoricalPercentileScorer(
+            csv_path=settings.ohlcv_csv_path(_sym, settings.ml_timeframe),
+            timeframe=settings.ml_timeframe,
+        )
 
     key_level_detector = KeyLevelDetector(symbols=settings.trading_symbols)
     cycle_classifier = CycleClassifier(timeframe=settings.ml_timeframe, symbols=settings.trading_symbols)
@@ -284,17 +286,19 @@ def build_runtime(settings: Settings) -> dict[str, Any]:
         sym: _make_writer(sym) for sym in settings.trading_symbols
     }
     # Backwards-compat: expose the primary symbol writer as `ohlcv_writer`
-    primary_sym = settings.trading_symbols[0] if settings.trading_symbols else settings.crypto_pair
-    ohlcv_writer = ohlcv_writers.get(primary_sym.upper()) or OHLCVWriter(
-        path=settings.ohlcv_csv_path(settings.crypto_pair, settings.ml_timeframe),
+    ohlcv_writer = ohlcv_writers.get(_primary_symbol.upper()) or OHLCVWriter(
+        path=settings.ohlcv_csv_path(_primary_symbol, settings.ml_timeframe),
         on_append=percentile_scorer.invalidate_cache,
     )
 
     risk = RiskManager(settings, outcome_predictor=outcome_predictor)
 
-    # Deterministic signal scorer (replaces LLM when USE_SIGNAL_SCORER=true)
+    # Trading engine dispatch:
+    #   scorer       → deterministic SignalScorer, no LLM
+    #   llm_skills   → LLM + skills, chart-only context
+    #   llm_enriched → LLM + skills + full context (indicators/ML/RAG)
     signal_scorer = None
-    if settings.use_signal_scorer:
+    if settings.trading_engine == "scorer":
         from src.services.trading.signal_scorer import SignalScorer  # noqa: PLC0415
         signal_scorer = SignalScorer(
             settings,
@@ -302,7 +306,13 @@ def build_runtime(settings: Settings) -> dict[str, Any]:
             key_level_detector=key_level_detector,
             outcome_predictor=outcome_predictor,
         )
-        logger.info("Signal scorer enabled — LLM will not be used for decisions")
+        logger.info("Trading engine: scorer — deterministic signal scorer (LLM disabled)")
+    else:
+        logger.info(
+            "Trading engine: %s — skills=%s",
+            settings.trading_engine,
+            ",".join(settings.trader_skills) or "(none)",
+        )
 
     ingestion = IngestionLoop(store, settings, sentiment_scorer=sentiment_scorer)
 
@@ -321,6 +331,7 @@ def build_runtime(settings: Settings) -> dict[str, Any]:
         trading_strategy=trading_strategy,
         memory_service=memory_service,
         cycle_classifier=cycle_classifier,
+        minimal_context=(settings.trading_engine == "llm_skills"),
     )
 
     trading = TradingLoop(

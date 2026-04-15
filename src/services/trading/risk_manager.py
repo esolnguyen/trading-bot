@@ -68,7 +68,7 @@ class RiskManager:
 
         if not self.settings.bot_enabled:
             self.logger.warning(
-                "Risk rule triggered: BOT_ENABLED is false; overriding to HOLD"
+                "Risk rule triggered: BOT_MODE=off; overriding to HOLD"
             )
             return RiskValidationResult(
                 decision=self._hold(decision, "bot_disabled"),
@@ -77,7 +77,7 @@ class RiskManager:
             )
 
         if dry_run:
-            self.logger.info("BOT_DRY_RUN is true; execution stays in dry-run mode")
+            self.logger.info("BOT_MODE=dry_run; execution stays in dry-run mode")
 
         if decision.action == Action.HOLD:
             self.logger.debug("HOLD passthrough — no risk checks needed")

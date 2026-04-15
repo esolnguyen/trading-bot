@@ -7,6 +7,7 @@ def build_system_prompt(
     max_order_usdt: float,
     regime_suffix: str = "",
     trading_symbols: list[str] | None = None,
+    skills_block: str = "",
 ) -> str:
     """Return the system prompt contract for the trading LLM.
 
@@ -14,6 +15,8 @@ def build_system_prompt(
         max_order_usdt: Maximum order size in USDT.
         regime_suffix: Optional macro regime instruction injected by CycleClassifier.
         trading_symbols: Allowed symbols list; defaults to BTCUSDT, ETHUSDT.
+        skills_block: Pre-rendered markdown block of playbook skills, appended
+            after the contract. Use ``load_skills(...)`` to build it.
     """
     symbols_str = ", ".join(trading_symbols) if trading_symbols else "BTCUSDT, ETHUSDT"
     base = (
@@ -29,4 +32,7 @@ def build_system_prompt(
         'For HOLD, include: {"action":"HOLD","symbol","reasoning"}.\n'
         "Reasoning must briefly cite the strongest technical or contextual evidence."
     )
-    return base + regime_suffix
+    prompt = base + regime_suffix
+    if skills_block:
+        prompt += "\n\n" + skills_block
+    return prompt
