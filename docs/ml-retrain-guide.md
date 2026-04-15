@@ -66,9 +66,13 @@ python scripts/fit_key_levels.py
 models/
   xgboost_direction_{SYM}_{TF}.joblib
   isolation_forest_{SYM}_{TF}.joblib
-  regime_classifier_{SYM}_{TF}.joblib
-  key_levels_cache.json
+  regime_classifier_{SYM}_1d.joblib
+  key_levels_{SYM}_cache.json
 ```
+
+> Timeframe tuning lives in `config/presets.json` — apply with
+> `python scripts/apply_preset.py <preset_name>`. You no longer set
+> `ML_TIMEFRAME` directly in `.env`.
 
 ---
 
@@ -94,8 +98,8 @@ python scripts/backfill_ohlcv.py --timeframe 1m --symbol btcusdt
 python scripts/train_direction.py --timeframe 1m --symbol btcusdt
 python scripts/train_anomaly.py   --timeframe 1m --symbol btcusdt
 
-# 3. Set ML_TIMEFRAME=1m in .env
-#    ML_TIMEFRAME=1m
+# 3. Apply the 1m preset (sets TIMEFRAME, ML_TIMEFRAME, leverage, SL/TP, scoring)
+python scripts/apply_preset.py scalping_1m
 
 # 4. Retrain daily (or set up a cron job)
 ```
@@ -112,8 +116,8 @@ python scripts/backfill_ohlcv.py --timeframe 5m --symbol ethusdt
 python scripts/train_direction.py --timeframe 5m --symbol ethusdt
 python scripts/train_anomaly.py   --timeframe 5m --symbol ethusdt
 
-# 3. Set ML_TIMEFRAME=5m in .env
-#    ML_TIMEFRAME=5m
+# 3. Apply the 5m preset (sets TIMEFRAME, ML_TIMEFRAME, leverage, SL/TP, scoring)
+python scripts/apply_preset.py scalping_5m
 
 # 4. Retrain every 2–3 days
 ```

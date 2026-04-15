@@ -32,16 +32,37 @@ GOOGLE_STUDIO_API_KEY=your_key
 # News/RAG
 CRYPTOCOMPARE_API_KEY=your_key
 
-# Symbols and timeframe
+# Symbols
 TRADING_SYMBOLS=BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT
-FUTURES_LEVERAGE=50           # for 15m x50
+SINGLE_SYMBOL_DECISION=false  # true = one LLM call evaluates all symbols
 ```
 
 ---
 
-## Step 3 — Apply a preset
+## Step 3 — Pick a trading engine
 
-Presets write all timeframe-related settings into `.env` at once.
+`TRADING_ENGINE` selects which decision path drives the main loop:
+
+| Value | Decision maker | Uses indicators? | Uses ML? | Uses RAG? | Cost |
+|---|---|---|---|---|---|
+| `scorer` | Deterministic signal scorer | yes | no | no | free (no LLM) |
+| `llm_skills` | LLM with playbook skills + chart only | no | no | no | low |
+| `llm_enriched` | LLM with skills + indicators + ML + RAG | yes | yes | yes | high |
+
+```env
+TRADING_ENGINE=scorer
+TRADER_SKILLS=candlestick,technical-basic,smc,crypto-derivatives,perp-funding-basis
+```
+
+`TRADER_SKILLS` is only consumed by the LLM modes. Skill names map to markdown
+files under `src/services/llm_trader/skills/`.
+
+---
+
+## Step 4 — Apply a preset
+
+Presets write all timeframe-related settings (timeframe, leverage, SL/TP,
+scoring weights, RSI thresholds, choppiness, etc.) into `.env` at once.
 
 ```bash
 # Preview without writing
@@ -61,13 +82,17 @@ Available presets:
 | `swing_1h` | 1h | x2–x5 |
 | `position_4h` | 4h | x1–x3 |
 
-> `FUTURES_LEVERAGE` is protected and never overwritten by presets — set it manually.
+Leverage and scoring weights ship with each preset and are overwritten when
+you apply it. API keys, `BOT_MODE`, `TRADING_ENGINE`, `TRADER_SKILLS`,
+`MAX_ORDER_USDT`, `TRADING_SYMBOLS`, and `SINGLE_SYMBOL_DECISION` are
+protected and never touched.
 
 ---
 
-## Step 4 — ML setup (backfill + train)
+## Step 5 — ML setup (backfill + train)
 
-Downloads OHLCV history and trains all ML models for every symbol in `TRADING_SYMBOLS`:
+Only needed when `TRADING_ENGINE=llm_enriched`. Downloads OHLCV history and
+trains all ML models for every symbol in `TRADING_SYMBOLS`:
 
 ```bash
 bash scripts/ml_setup.sh intraday_15m
@@ -76,14 +101,14 @@ bash scripts/ml_setup.sh intraday_15m
 This runs 6 steps:
 1. Apply preset
 2. Install dependencies
-3. Backfill OHLCV data (15m + 1d) for each symbol
+3. Backfill OHLCV data (timeframe + 1d) for each symbol
 4. Fit key S/R levels per symbol
 5. Train anomaly detector + direction classifier per symbol
 6. Train regime classifier per symbol
 
 Model files are saved to `models/`. Re-run weekly to keep models fresh.
 
-To retrain only the direction and anomaly models without a full setup:
+To retrain direction and anomaly models without a full setup:
 
 ```bash
 python scripts/train_direction.py --timeframe 15m --symbol btcusdt
@@ -93,28 +118,34 @@ python scripts/train_anomaly.py  --timeframe 15m --symbol btcusdt
 
 ---
 
-## Step 5 — Enable the bot
+## Step 6 — Pick a bot mode
 
-In `.env`:
+`BOT_MODE` is the master switch:
+
+| Value | Effect |
+|---|---|
+| `off` | Master kill switch — always HOLD, no orders ever placed |
+| `dry_run` | Simulate orders and log what would have happened |
+| `live` | Place real orders on Binance |
 
 ```env
-BOT_ENABLED=true
-BOT_DRY_RUN=true    # start with dry-run, switch to false when confident
+BOT_MODE=dry_run    # start here, switch to live when confident
 ```
 
 ---
 
-## Step 6 — Run
+## Step 7 — Run
 
 ```bash
 python -m src.app
 ```
 
-The bot starts the trading loop and RAG ingestion loop in parallel. Cycle output looks like:
+The bot starts the trading loop and RAG ingestion loop in parallel. Cycle
+output looks like:
 
 ```
 Cycle 1 2026-04-02T16:10:00Z BTC:NEUTRAL ETH:SELL SOL:SELL BNB:NEUTRAL Decision:SELL
-cycle=1 BTCUSDT=SELL(passed) | ETHUSDT=SELL(passed) | SOLUSDT=HOLD(passed) | BNBUSDT=HOLD(passed) dry_run=True
+cycle=1 BTCUSDT=SELL(passed) | ETHUSDT=SELL(passed) | SOLUSDT=HOLD(passed) | BNBUSDT=HOLD(passed) mode=dry_run
 ```
 
 ---
@@ -122,18 +153,18 @@ cycle=1 BTCUSDT=SELL(passed) | ETHUSDT=SELL(passed) | SOLUSDT=HOLD(passed) | BNB
 ## Optional — Dashboard
 
 ```bash
-streamlit run dashboard.py
+python -m src.dashboard.server    # FastAPI, port 8000
 ```
 
 ---
 
 ## Dry run → Live checklist
 
-Before setting `BOT_DRY_RUN=false`:
+Before setting `BOT_MODE=live`:
 
 - [ ] Orders appearing correctly in dry-run logs
-- [ ] `FUTURES_LEVERAGE` set to intended value
+- [ ] `FUTURES_LEVERAGE` set to intended value (applied by preset)
 - [ ] `BINANCE_TESTNET=false`
 - [ ] `BINANCE_BASE_URL` empty (auto-selects live endpoint)
 - [ ] `MAX_ORDER_USDT` set to your actual position size
-- [ ] `BOT_DRY_RUN=false`
+- [ ] `BOT_MODE=live`

@@ -2,7 +2,11 @@
 
 ## What It Is
 
-An AI-assisted cryptocurrency trading bot that trades BTC/USDT and ETH/USDT on Binance. It combines traditional technical analysis with LLM-powered decision-making and a RAG (Retrieval-Augmented Generation) pipeline for market context enrichment.
+An AI-assisted cryptocurrency trading bot that trades crypto perpetual futures
+on Binance (symbols configured via `TRADING_SYMBOLS`). It combines traditional
+technical analysis, a suite of ML enrichment models, and LLM-powered
+decision-making over a RAG (Retrieval-Augmented Generation) pipeline for market
+context.
 
 ## Architecture
 
@@ -17,10 +21,12 @@ src/
 │   ├── market/             # OHLCVCandle, MarketSnapshot
 │   └── trading/            # Action, TradeDecision, Position, TradeRecord, TradingStatistics
 ├── services/               # Business logic and orchestration
-│   ├── analysis/           # Indicator calculation, technical analysis, pattern detection, charting
+│   ├── analysis/           # Indicator calculation, technical analysis, pattern detection, charting, context builder
 │   │   └── indicators/     # Modular indicator library (momentum, trend, volatility, volume, etc.)
+│   ├── ml/                 # Percentile scorer, direction classifier, regime classifier, anomaly detector, outcome predictor, key level detector, sentiment scorer
 │   ├── rag/                # Ingestion loop, retriever, memory manager, data sources
-│   └── trading/            # Trading loop, executor, risk manager, strategy, brain, statistics
+│   ├── llm_trader/         # Standalone LLM-driven futures module + skills playbook
+│   └── trading/            # Trading loop, executor, risk manager, strategy, brain, statistics, signal scorer
 ├── infrastructure/         # External system adapters
 │   ├── ai/                 # LLM providers (Google, OpenRouter, LM Studio, BlockRun, Azure)
 │   ├── binance/            # Binance market data feed
@@ -104,7 +110,7 @@ src/
 - Kill switches: max consecutive losses, max daily loss percentage
 - Position sizing clamped to `max_order_usdt`
 - Correlated pair protection (won't hold same-direction BTC + ETH)
-- Bot enable/disable flag
+- `BOT_MODE` switch (`off` / `dry_run` / `live`)
 - Trailing stop with configurable activation
 - Partial take-profit levels
 
@@ -141,8 +147,34 @@ pip install -r requirements.txt
 python -m src.app
 ```
 
-## Current Decision-Making Approach
+## Decision-Making Modes
 
-The bot uses an **LLM-as-decision-maker** pattern. Traditional indicators and patterns are computed deterministically, then packaged into a structured prompt. The LLM interprets all signals together and outputs a JSON trade decision. Rule-based risk management acts as a hard safety layer between the LLM output and actual execution.
+The `TRADING_ENGINE` setting selects which decision path drives the main loop:
 
-There are **no traditional ML models** (classifiers, regressors, neural nets) in the current pipeline. All "intelligence" comes from the LLM plus hand-coded indicator thresholds.
+| Engine | Decision maker | Inputs |
+|---|---|---|
+| `scorer` | Deterministic weighted signal scorer | Indicators, patterns, multi-TF, key levels — no LLM calls |
+| `llm_skills` | LLM with playbook skills | Price tape, position, chart only |
+| `llm_enriched` | LLM with full context | Skills + indicators + ML + RAG + brain memory |
+
+In all modes, the `RiskManager` acts as a hard safety layer between the engine
+output and actual execution (kill switches, correlation guard, size clamp,
+outcome-predictor gate).
+
+## ML Enrichment Layers
+
+Traditional ML models inform the LLM, they never override it (except B3/B4
+which run as hard gates outside the LLM):
+
+| ID | Model | Role |
+|---|---|---|
+| A1 | Historical Percentile Scorer | Current indicators vs. 6-month history |
+| A2 | Multi-Timeframe Analyzer | 1H/4H/1D alignment summary |
+| A3 | DBSCAN Key Level Detector | Clustered S/R levels |
+| A4 | Random Forest Regime Classifier | Macro cycle (bull/bear/accumulation) |
+| B1 | FinBERT Sentiment Scorer | News sentiment [-1,+1] at ingestion |
+| B2 | XGBoost Direction Classifier | P(bullish) for prompt context |
+| B3 | Logistic Regression Outcome Predictor | Hard trade gate in RiskManager |
+| B4 | Isolation Forest Anomaly Detector | Skip entire cycle on anomaly |
+
+See `docs/knowledge.md` §10 for full details.

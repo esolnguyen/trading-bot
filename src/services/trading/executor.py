@@ -159,6 +159,11 @@ class Executor:
         ``quantity``.  A small offset below/above the trigger price is applied so
         the limit order has a realistic chance of filling in a fast-moving market.
 
+        On ``demo-fapi.binance.com`` conditional order types are rejected by
+        ``/fapi/v1/order`` with ``-4120``. Bracket placement is skipped there
+        and the position monitor in ``trading_loop.run_position_monitor``
+        enforces the stored ``sl_price``/``tp_price`` in software (15 s poll).
+
         Returns ``(sl_order_id, tp_order_id)``; either may be None if the
         individual placement fails — the error is logged and the position monitor
         will fall back to software SL management.
@@ -168,6 +173,15 @@ class Executor:
         is_futures = getattr(self.settings, "binance_product", "spot") == "usdt_futures"
         sl_order_id: str | None = None
         tp_order_id: str | None = None
+
+        if is_futures and self._is_demo_fapi():
+            logger.info(
+                "Skipping exchange bracket orders for %s on demo-fapi "
+                "(conditional types unsupported) — software SL/TP active via "
+                "position monitor: sl=%.6f tp=%.6f",
+                symbol, sl_price, tp_price,
+            )
+            return None, None
 
         sl_stop_str = await self._format_price(symbol, sl_price, client)
         tp_stop_str = await self._format_price(symbol, tp_price, client)
@@ -371,12 +385,23 @@ class Executor:
             else:
                 err1 = err3 or err1
 
-        logger.error(
-            "Failed to place futures %s bracket for %s — position is UNPROTECTED. "
+        logger.warning(
+            "Failed to place futures %s bracket for %s — software SL/TP active "
+            "via position monitor (15 s poll). "
             "side=%s type=%s stopPrice=%s qty=%s last_error=%s",
             label, symbol, side, market_type, stop_str, qty_str, err1,
         )
         return None
+
+    def _is_demo_fapi(self) -> bool:
+        """Detect Binance's demo futures environment.
+
+        ``demo-fapi.binance.com`` rejects conditional order types on
+        ``/fapi/v1/order`` with ``-4120``. We skip bracket placement there
+        and rely on the software position monitor instead.
+        """
+        base_url = getattr(self.settings, "binance_base_url", "") or ""
+        return "demo-fapi" in base_url
 
     async def get_live_position_size(self, symbol: str) -> float:
         """Return the absolute open position quantity on the exchange.

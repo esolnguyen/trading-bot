@@ -1,6 +1,6 @@
 # Project Knowledge Base — AI Trading Bot
 
-> Auto-generated from source code on 2026-04-03. Use this file as the authoritative
+> Auto-generated from source code on 2026-04-15. Use this file as the authoritative
 > reference for understanding the codebase structure, data flows, and design decisions.
 
 ---
@@ -219,14 +219,22 @@ All settings are a `@dataclass` loaded via `Settings.from_env()`.
 ### Key groups:
 
 **Bot Core**
-- `bot_enabled: bool = False` — master kill switch
-- `bot_dry_run: bool = True` — simulate orders
+- `bot_mode: str = "off"` — master switch: `off` | `dry_run` | `live`
+  - `bot_enabled` / `bot_dry_run` are derived `@property` shims for legacy callers
 - `bot_interval_seconds: int = 300` — cycle cadence
 - `max_order_usdt: float = 50.0`
 - `trading_symbols: list[str] = ["BTCUSDT","ETHUSDT"]`
-- `crypto_pair: str = "BTC/USDT"` — primary display pair
-- `timeframe: str = "1h"` — candle timeframe
+- `single_symbol_decision: bool = True` — one LLM call evaluates all symbols
+- `timeframe: str = "1h"` — candle timeframe (applied by preset)
 - `candle_limit: int = 200`
+
+**Trading Engine**
+- `trading_engine: str = "llm_enriched"` — `scorer` | `llm_skills` | `llm_enriched`
+  - `scorer` — deterministic `SignalScorer`, no LLM calls
+  - `llm_skills` — LLM with playbook skills + chart only (minimal context)
+  - `llm_enriched` — LLM with skills + indicators + ML + RAG (full context)
+- `trader_skills: list[str]` — skill markdown files loaded from `src/services/llm_trader/skills/`
+- `use_signal_scorer` is a derived `@property` (legacy alias for `trading_engine == "scorer"`)
 
 **Binance**
 - `binance_api_key`, `binance_api_secret`
@@ -256,12 +264,21 @@ All settings are a `@dataclass` loaded via `Settings.from_env()`.
 - `partial_tp1_atr_multiplier: float = 2.0` (TP1 = entry ± ATR×2)
 - `partial_tp1_size_pct: float = 0.5`
 
-**Signal Thresholds**
+**Signal Thresholds** (applied by preset — see `config/presets.json`)
 - `choppiness_threshold: float = 61.8` — skip entries above this
 - `signal_rsi_strong_buy: float = 30.0`
 - `signal_rsi_buy: float = 40.0`
 - `signal_rsi_sell: float = 60.0`
 - `signal_rsi_strong_sell: float = 70.0`
+
+**Scoring Weights (scorer engine only, applied by preset)**
+- `scoring_entry_threshold`, `scoring_exit_threshold`
+- `scoring_w_signal`, `scoring_w_direction`, `scoring_w_trend`,
+  `scoring_w_momentum`, `scoring_w_volume`, `scoring_w_key_levels`
+- `scoring_choppiness_penalty`
+
+**Futures**
+- `futures_leverage: int` — applied by preset; higher for shorter timeframes
 
 **RAG**
 - `chroma_path: str = "./chroma_db"`
@@ -303,7 +320,7 @@ Hard safety layer. Runs **after** the LLM, **before** the executor.
 
 ### Gates (in order):
 1. **`check_kill_switches()`** — `consecutive_losses >= max` or `daily_loss_pct >= max` → halt entire cycle
-2. **`bot_enabled=False`** → always HOLD
+2. **`BOT_MODE=off`** → always HOLD
 3. **Outcome predictor gate (B3)** — `OutcomePredictor.should_block()` → HOLD if `P(win) < 0.40`
 4. **Confidence threshold** — HOLD if `decision.confidence < min_confidence_threshold` (when > 0)
 5. **Correlation guard** — won't open BTCUSDT + ETHUSDT same-direction positions simultaneously
@@ -648,16 +665,19 @@ Domain models that need JSON persistence (Position, TradeRecord, etc.) inherit `
 cp .env.example .env
 # Fill in: BINANCE_API_KEY, BINANCE_API_SECRET, CRYPTOCOMPARE_API_KEY
 # Set provider: PROVIDER=azure|googleai|openrouter|local|blockrun
+# Pick engine: TRADING_ENGINE=scorer|llm_skills|llm_enriched
 
 # Install dependencies
 pip install -r requirements.txt
 
-# Train ML models (after backfilling data)
-python scripts/backfill_ohlcv.py
-python scripts/retrain_all.py
+# Apply a preset (timeframe, leverage, SL/TP, scoring weights, RSI thresholds)
+python scripts/apply_preset.py intraday_15m
 
-# Run (dry-run mode is safe default)
-BOT_DRY_RUN=true python -m src.app
+# Train ML models (only needed for llm_enriched)
+bash scripts/ml_setup.sh intraday_15m
+
+# Run (BOT_MODE=dry_run is the safe default)
+python -m src.app
 ```
 
 Optional heavy deps (uncomment in `requirements.txt` if needed):
