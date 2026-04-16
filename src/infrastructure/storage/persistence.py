@@ -36,19 +36,30 @@ class Persistence:
         "reasoning",
     ]
 
-    def __init__(self, log_dir: str | Path = "logs", data_dir: str | Path = "data", timeframe: str = "") -> None:
+    def __init__(
+        self,
+        log_dir: str | Path = "logs",
+        data_dir: str | Path = "data",
+        timeframe: str = "",
+        trading_engine: str = "",
+    ) -> None:
         base_log_dir = Path(log_dir)
         self.timeframe = timeframe
-        # Organise logs into a timeframe subfolder so each preset
-        # (1m, 5m, 15m, 1h, 4h …) gets its own directory.
-        if timeframe:
+        # Organise logs by trading engine, with an extra timeframe
+        # subfolder for the scorer engine (it runs across multiple TFs).
+        if trading_engine:
+            self.log_dir = base_log_dir / trading_engine
+            if trading_engine == "scorer" and timeframe:
+                self.log_dir = self.log_dir / timeframe
+        elif timeframe:
             self.log_dir = base_log_dir / timeframe
         else:
             self.log_dir = base_log_dir
         self.data_dir = Path(data_dir)
+        self.daily_log_dir = self.log_dir / datetime.now().strftime("%Y-%m-%d")
         self.trades_csv_path = self.log_dir / "trades.csv"
-        self.bot_log_path = self.log_dir / "bot.log"
-        self.log_dir.mkdir(parents=True, exist_ok=True)
+        self.bot_log_path = self.daily_log_dir / "bot.log"
+        self.daily_log_dir.mkdir(parents=True, exist_ok=True)
         self.data_dir.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------------

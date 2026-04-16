@@ -38,15 +38,22 @@ _TIMEFRAME_FILE_HANDLER: logging.Handler | None = None
 
 
 def _attach_timeframe_file_handler(settings: Settings) -> None:
-    """Attach a per-timeframe file handler to the root logger.
+    """Attach a per-engine file handler to the root logger.
 
-    Routes runtime logs to ``<log_dir>/<timeframe>/app.log`` so each preset
-    keeps its own log stream while still printing to the console.
+    Routes runtime logs to ``<log_dir>/<engine>/app.log`` (or
+    ``<log_dir>/<engine>/<timeframe>/app.log`` for the scorer engine) so
+    each engine/preset keeps its own log stream while still printing to the
+    console.
     """
     global _TIMEFRAME_FILE_HANDLER
     from pathlib import Path as _Path  # noqa: PLC0415
+    from datetime import datetime as _dt  # noqa: PLC0415
 
-    target_dir = _Path(settings.log_dir) / (settings.timeframe or "default")
+    engine = settings.trading_engine or "default"
+    target_dir = _Path(settings.log_dir) / engine
+    if engine == "scorer" and settings.timeframe:
+        target_dir = target_dir / settings.timeframe
+    target_dir = target_dir / _dt.now().strftime("%Y-%m-%d")
     target_dir.mkdir(parents=True, exist_ok=True)
     target_path = target_dir / "app.log"
 
@@ -61,7 +68,9 @@ def _attach_timeframe_file_handler(settings: Settings) -> None:
     handler = logging.FileHandler(target_path, encoding="utf-8")
     handler.setFormatter(
         logging.Formatter(
-            "%(asctime)s %(levelname)s [tf=" + (settings.timeframe or "?") + "] %(name)s: %(message)s"
+            "%(asctime)s %(levelname)s [engine=" + engine
+            + ((" tf=" + settings.timeframe) if settings.timeframe else "")
+            + "] %(name)s: %(message)s"
         )
     )
     handler.setLevel(root.level)
@@ -237,6 +246,7 @@ def build_runtime(settings: Settings) -> dict[str, Any]:
         log_dir=settings.log_dir,
         data_dir=settings.data_dir,
         timeframe=settings.timeframe,
+        trading_engine=settings.trading_engine,
     )
     _attach_timeframe_file_handler(settings)
     logger.info(

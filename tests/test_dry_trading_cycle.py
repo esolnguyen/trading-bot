@@ -35,7 +35,7 @@ class FakeAggregator:
     def __init__(self) -> None:
         self.feed = self
 
-    async def snapshot(self, symbol: str) -> MarketSnapshot:
+    async def snapshot(self, symbol: str, *, timeframe: str = "1h", limit: int = 200) -> MarketSnapshot:
         return snapshot(symbol, 64000.0 if symbol == "BTCUSDT" else 3200.0)
 
     async def get_balance(self) -> dict:
@@ -50,7 +50,7 @@ class FakeAggregator:
 
 
 class FakeTechnicalAnalyzer:
-    def analyze(self, symbol: str, snapshot: MarketSnapshot) -> TechnicalAnalysis:
+    def analyze(self, symbol: str, snapshot: MarketSnapshot, *_args: object, **_kwargs: object) -> TechnicalAnalysis:
         return TechnicalAnalysis(
             symbol=symbol,
             signal=Signal.BUY if symbol == "BTCUSDT" else Signal.NEUTRAL,
@@ -71,7 +71,7 @@ class FakeTechnicalAnalyzer:
 
 
 class FakePatternAnalyzer:
-    def analyze(self, symbol: str, candles: list[OHLCVCandle]) -> PatternResult:
+    def analyze(self, symbol: str, candles: list[OHLCVCandle], *_args: object, **_kwargs: object) -> PatternResult:
         return PatternResult(symbol=symbol, patterns=["double_bottom"] if symbol == "BTCUSDT" else [])
 
 
@@ -81,8 +81,11 @@ class FakeChartGenerator:
 
 
 class FakeRetriever:
-    def retrieve(self, snapshot: MarketSnapshot, analysis: TechnicalAnalysis) -> str:
+    def retrieve(self, snapshot: MarketSnapshot, analysis: TechnicalAnalysis, *_args: object, **_kwargs: object) -> str:
         return f"=== RECENT NEWS (BTC/ETH) ===\n[1] {snapshot.symbol} context"
+
+    def retrieve_macro(self, query: str) -> str:
+        return ""
 
 
 class FakeBuilder:
@@ -112,7 +115,7 @@ class FakeLLM:
 
 
 class FakeRisk:
-    def validate(self, decision: TradeDecision, balance: dict) -> RiskValidationResult:
+    def validate(self, decision: TradeDecision, balance: dict, *_args: object, **_kwargs: object) -> RiskValidationResult:
         return RiskValidationResult(decision=decision, dry_run=True, status="passed")
 
 
@@ -188,7 +191,10 @@ async def test_dry_trading_cycle_logs_without_real_trade(tmp_path: Path) -> None
 
     result = await loop.run_cycle_once()
 
-    assert result["outcome"].dry_run is True
+    outcomes = result["outcomes"]
+    assert outcomes, "expected at least one decision outcome"
+    first_outcome, _risk = next(iter(outcomes.values()))
+    assert first_outcome.dry_run is True
     assert persistence.trades_csv_path.exists()
     assert persistence.bot_log_path.exists()
     assert "BTCUSDT" in persistence.trades_csv_path.read_text(encoding="utf-8")
@@ -196,6 +202,6 @@ async def test_dry_trading_cycle_logs_without_real_trade(tmp_path: Path) -> None
     assert '"total_tokens": 110' in persistence.bot_log_path.read_text(encoding="utf-8")
     assert '"decision_source": "grok"' in persistence.bot_log_path.read_text(encoding="utf-8")
     assert '"llm_raw_response": "{\\"action\\":\\"BUY\\",\\"symbol\\":\\"BTCUSDT\\"}"' in persistence.bot_log_path.read_text(encoding="utf-8")
-    assert len(memory.recorded) == 1
-    assert len(console.calls) == 1
+    assert len(memory.recorded) >= 1
+    assert len(console.calls) >= 1
     assert logger_notifier.messages
