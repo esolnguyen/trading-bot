@@ -58,16 +58,21 @@ class Executor:
                     close_connection()
                 self._api_client = None
 
+    @staticmethod
+    def _simulated_outcome(decision: TradeDecision, *, dry_run: bool) -> TradeOutcome:
+        """Return a no-side-effect TradeOutcome (for HOLD, dry runs, or rounded-to-zero qty)."""
+        return TradeOutcome(
+            decision=decision,
+            order_id=None,
+            executed_price=None,
+            pnl_usdt=None,
+            dry_run=dry_run,
+            timestamp=decision.timestamp,
+        )
+
     async def execute(self, decision: TradeDecision, dry_run: bool) -> TradeOutcome:
         if dry_run or decision.action == Action.HOLD:
-            return TradeOutcome(
-                decision=decision,
-                order_id=None,
-                executed_price=None,
-                pnl_usdt=None,
-                dry_run=dry_run,
-                timestamp=decision.timestamp,
-            )
+            return self._simulated_outcome(decision, dry_run=dry_run)
 
         client = await self._ensure_api_client()
         qty_str = await self._format_quantity(
@@ -80,14 +85,7 @@ class Executor:
                 decision.symbol,
                 decision.quantity,
             )
-            return TradeOutcome(
-                decision=decision,
-                order_id=None,
-                executed_price=None,
-                pnl_usdt=None,
-                dry_run=True,
-                timestamp=decision.timestamp,
-            )
+            return self._simulated_outcome(decision, dry_run=True)
         # Map close actions to the Binance side that closes the position
         _CLOSE_SIDE = {
             Action.CLOSE_LONG: "SELL",

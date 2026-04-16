@@ -11,6 +11,8 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
+from src.shared.json_io import read_json as _read_json
+
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
@@ -51,14 +53,6 @@ STAT_META: dict[str, dict[str, Any]] = {
 # ---------------------------------------------------------------------------
 # Data loaders
 # ---------------------------------------------------------------------------
-
-def _read_json(path: Path) -> Any:
-    if not path.exists():
-        return None
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return None
 
 
 @st.cache_data(ttl=5)

@@ -9,16 +9,7 @@ from typing import Tuple
 
 import numpy as np
 
-try:
-    from numba import njit
-except ImportError:
-    def njit(*args, **kwargs):
-        """Fallback no-op decorator when numba is not installed."""
-        def decorator(func):
-            return func
-        if len(args) == 1 and callable(args[0]):
-            return args[0]
-        return decorator
+from src.services.analysis.indicators._numba_compat import njit
 
 from src.services.analysis.indicators.overlap import ema_numba
 from src.services.analysis.indicators.volatility import atr_numba

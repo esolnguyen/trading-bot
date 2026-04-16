@@ -11,6 +11,8 @@ from typing import Any, List, Optional
 
 from src.domain.analysis import PatternResult, TechnicalAnalysis
 from src.domain.trading import TradeOutcome
+from src.shared.json_io import read_json as _shared_read_json, write_json as _shared_write_json
+from src.shared.symbol_utils import slugify_symbol
 
 
 class Persistence:
@@ -137,24 +139,22 @@ class Persistence:
     # ------------------------------------------------------------------
 
     def _read_json(self, path: Path) -> Any:
-        if not path.exists():
-            return None
-        try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            return None
+        return _shared_read_json(path)
 
     def _write_json(self, path: Path, data: Any) -> None:
-        path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        _shared_write_json(path, data)
 
     # ------------------------------------------------------------------
     # Position state
     # ------------------------------------------------------------------
 
+    def _slug_path(self, kind: str, symbol: str) -> Path:
+        """Build a per-symbol JSON path for the given file kind."""
+        return self.data_dir / f"{kind}_{slugify_symbol(symbol)}.json"
+
     def save_position(self, symbol: str, position_data: Optional[dict[str, Any]]) -> None:
         """Persist an open position dict (or None to clear it)."""
-        slug = symbol.replace("/", "").replace(":", "").lower()
-        path = self.data_dir / f"position_{slug}.json"
+        path = self._slug_path("position", symbol)
         if position_data is None:
             path.unlink(missing_ok=True)
         else:
@@ -162,9 +162,7 @@ class Persistence:
 
     def load_position(self, symbol: str) -> Optional[dict[str, Any]]:
         """Load an open position dict for the given symbol."""
-        slug = symbol.replace("/", "").replace(":", "").lower()
-        path = self.data_dir / f"position_{slug}.json"
-        return self._read_json(path)
+        return self._read_json(self._slug_path("position", symbol))
 
     async def async_save_position(self, symbol: str, position_data: Optional[dict[str, Any]]) -> None:
         await asyncio.to_thread(self.save_position, symbol, position_data)
@@ -174,8 +172,7 @@ class Persistence:
     # ------------------------------------------------------------------
 
     def _trade_history_path(self, symbol: str) -> Path:
-        slug = symbol.replace("/", "").replace(":", "").lower()
-        return self.data_dir / f"trade_history_{slug}.json"
+        return self._slug_path("trade_history", symbol)
 
     def save_trade_record(self, symbol: str, record: dict[str, Any]) -> None:
         """Append a single trade record dict to the trade history file."""
@@ -222,8 +219,7 @@ class Persistence:
     # ------------------------------------------------------------------
 
     def _statistics_path(self, symbol: str) -> Path:
-        slug = symbol.replace("/", "").replace(":", "").lower()
-        return self.data_dir / f"statistics_{slug}.json"
+        return self._slug_path("statistics", symbol)
 
     def save_statistics(self, symbol: str, stats: dict[str, Any]) -> None:
         self._write_json(self._statistics_path(symbol), stats)
@@ -239,8 +235,7 @@ class Persistence:
     # ------------------------------------------------------------------
 
     def _response_cache_path(self, symbol: str) -> Path:
-        slug = symbol.replace("/", "").replace(":", "").lower()
-        return self.data_dir / f"last_response_{slug}.json"
+        return self._slug_path("last_response", symbol)
 
     def save_previous_response(self, symbol: str, response_data: dict[str, Any]) -> None:
         self._write_json(self._response_cache_path(symbol), response_data)
@@ -256,8 +251,7 @@ class Persistence:
     # ------------------------------------------------------------------
 
     def _analysis_time_path(self, symbol: str) -> Path:
-        slug = symbol.replace("/", "").replace(":", "").lower()
-        return self.data_dir / f"last_analysis_{slug}.json"
+        return self._slug_path("last_analysis", symbol)
 
     def save_last_analysis_time(self, symbol: str, ts: Optional[datetime] = None) -> None:
         """Persist the last analysis timestamp (defaults to UTC now)."""
