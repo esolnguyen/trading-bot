@@ -1,8 +1,8 @@
 """Trading strategy that wraps analysis with position management.
 
 Helpers live in sibling modules:
-  * :mod:`trading_strategy_monitor` — trailing stop, partial TP1, SL clamp
-  * :mod:`trading_strategy_context` — prompt-facing position/capital context
+  * :mod:`.monitor` — trailing stop, partial TP1, SL clamp
+  * :mod:`.context` — prompt-facing position/capital context
 """
 
 import logging
@@ -11,8 +11,8 @@ from typing import Any, Dict, Optional, TYPE_CHECKING
 
 from src.contracts.risk_contract import RiskManagerProtocol
 from src.domain.trading.models import Position, TradeRecord
-from src.services.trading.trading_strategy_context import format_position_context
-from src.services.trading.trading_strategy_monitor import (
+from .context import format_position_context
+from .monitor import (
     build_conditions_from_position,
     clamp_sl_update,
     trigger_partial_tp,
