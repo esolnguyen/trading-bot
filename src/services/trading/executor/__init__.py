@@ -1,9 +1,9 @@
 """Trade execution through the local Binance REST client.
 
 Heavy lifting lives in sibling modules:
-  * :mod:`executor_filters` — LOT_SIZE / PRICE_FILTER caching + rounding
-  * :mod:`executor_brackets` — SL/TP bracket placement + cancellation
-  * :mod:`executor_limit`    — LIMIT fill polling + price extraction
+  * :mod:`.filters` — LOT_SIZE / PRICE_FILTER caching + rounding
+  * :mod:`.brackets` — SL/TP bracket placement + cancellation
+  * :mod:`.limit`    — LIMIT fill polling + price extraction
 """
 
 from __future__ import annotations
@@ -15,12 +15,12 @@ from typing import Any, Callable
 from src.core.config import Settings
 from src.domain.trading import Action, TradeDecision, TradeOutcome
 from src.infrastructure.binance.rest_client import BinanceRestClient
-from src.services.trading.executor_brackets import (
+from .brackets import (
     cancel_bracket_orders as _cancel_bracket_orders,
     place_bracket_orders as _place_bracket_orders,
 )
-from src.services.trading.executor_filters import ExchangeFilters
-from src.services.trading.executor_limit import await_limit_fill, extract_price
+from .filters import ExchangeFilters
+from .limit import await_limit_fill, extract_price
 
 logger = logging.getLogger(__name__)
 

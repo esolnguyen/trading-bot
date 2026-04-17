@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from src.services.trading.executor_filters import ExchangeFilters
+from .filters import ExchangeFilters
 
 logger = logging.getLogger(__name__)
 
