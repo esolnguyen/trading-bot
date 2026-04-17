@@ -4,10 +4,10 @@ Provides semantic search over historical trades to find relevant past
 experiences for context-aware decision making.  The class is a thin
 facade — the real work lives in sibling modules:
 
-  * :mod:`vector_memory_storage`   — writes (experiences + semantic rules)
-  * :mod:`vector_memory_retrieval` — similarity search + recency decay
-  * :mod:`vector_memory_prompts`   — prompt-context formatting
-  * :mod:`vector_memory_stats`     — win-rate / threshold computations
+  * :mod:`.storage`   — writes (experiences + semantic rules)
+  * :mod:`.retrieval` — similarity search + recency decay
+  * :mod:`.prompts`   — prompt-context formatting
+  * :mod:`.stats`     — win-rate / threshold computations
 """
 
 from __future__ import annotations
@@ -15,11 +15,11 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
-from src.infrastructure.storage import (
-    vector_memory_prompts as _prompts,
-    vector_memory_retrieval as _retrieval,
-    vector_memory_stats as _stats,
-    vector_memory_storage as _storage,
+from . import (
+    prompts as _prompts,
+    retrieval as _retrieval,
+    stats as _stats,
+    storage as _storage,
 )
 
 
