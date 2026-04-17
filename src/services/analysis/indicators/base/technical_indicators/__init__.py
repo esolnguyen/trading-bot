@@ -4,10 +4,10 @@ All indicator methods are exposed directly on :class:`TechnicalIndicators`
 instead of through category sub-objects.  Implementation lives in mixin
 modules to keep each file small:
 
-  * :mod:`technical_indicators_oscillators` — momentum, overlap, price
-  * :mod:`technical_indicators_stats`       — sentiment, statistical
-  * :mod:`technical_indicators_structure`   — support/resistance, trend
-  * :mod:`technical_indicators_volume`      — volatility, volume
+  * :mod:`.oscillators` — momentum, overlap, price
+  * :mod:`.stats`       — sentiment, statistical
+  * :mod:`.structure`   — support/resistance, trend
+  * :mod:`.volume`      — volatility, volume
 """
 
 from __future__ import annotations
@@ -17,11 +17,11 @@ from typing import List, Union
 import numpy as np
 import pandas as pd
 
-from .indicator_base import IndicatorBase
-from .technical_indicators_oscillators import OscillatorsMixin
-from .technical_indicators_stats import StatsMixin
-from .technical_indicators_structure import StructureMixin
-from .technical_indicators_volume import VolatilityVolumeMixin
+from ..indicator_base import IndicatorBase
+from .oscillators import OscillatorsMixin
+from .stats import StatsMixin
+from .structure import StructureMixin
+from .volume import VolatilityVolumeMixin
 
 
 class TechnicalIndicators(
