@@ -1,7 +1,7 @@
 """Trading brain service for learning and adaptive parameters.
 
 Handles brain state management, learning from closed trades, and providing AI context.
-Helpers live in :mod:`brain_context` and :mod:`brain_reflection`.
+Helpers live in :mod:`.context` and :mod:`.reflection`.
 """
 
 import logging
@@ -9,12 +9,12 @@ from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from src.domain.trading.models import Position, TradeRecord
 from src.infrastructure.storage.vector_memory import VectorMemoryService
-from src.services.trading.brain_context import (
+from .context import (
     build_brain_prompt_context,
     build_rich_context_string,
     get_vector_context,
 )
-from src.services.trading.brain_reflection import (
+from .reflection import (
     run_loss_reflection,
     run_win_reflection,
 )

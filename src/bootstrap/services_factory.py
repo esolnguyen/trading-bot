@@ -27,7 +27,7 @@ def try_build_brain_service(
     if vector_memory is None:
         return None
     try:
-        from src.services.trading.brain_service import TradingBrainService  # noqa: PLC0415
+        from src.services.trading.brain import TradingBrainService  # noqa: PLC0415
 
         return TradingBrainService(
             persistence=persistence, vector_memory=vector_memory, logger=logger
