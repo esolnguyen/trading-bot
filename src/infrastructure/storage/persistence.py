@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, List, Optional
 
 from src.domain.analysis import PatternResult, TechnicalAnalysis
-from src.domain.trading import TradeOutcome
+from src.domain.trading import Action, TradeOutcome
 from src.shared.json_io import read_json as _shared_read_json, write_json as _shared_write_json
 from src.shared.symbol_utils import slugify_symbol
 
@@ -91,6 +91,92 @@ class Persistence:
                     outcome.decision.reasoning,
                 ]
             )
+
+    def append_trade_event(
+        self,
+        outcome: TradeOutcome,
+        timestamp_iso: str,
+        *,
+        position_before: Optional[dict[str, Any]] = None,
+        position_after: Optional[dict[str, Any]] = None,
+    ) -> None:
+        """Append a one-line, human-readable trade event to logs/<engine>/<date>/trades.log.
+
+        Skips HOLD actions (too noisy). For closes, includes entry/exit/pnl/reason;
+        for opens, includes entry/sl/tp.
+        """
+        action = outcome.decision.action
+        if action == Action.HOLD:
+            return
+
+        line = self._format_trade_event(outcome, timestamp_iso, position_before, position_after)
+        if line is None:
+            return
+
+        try:
+            event_date = timestamp_iso.split("T", 1)[0]
+        except Exception:  # noqa: BLE001
+            event_date = datetime.now().strftime("%Y-%m-%d")
+        date_dir = self.log_dir / event_date
+        date_dir.mkdir(parents=True, exist_ok=True)
+        with (date_dir / "trades.log").open("a", encoding="utf-8") as handle:
+            handle.write(line + "\n")
+
+    @staticmethod
+    def _format_trade_event(
+        outcome: TradeOutcome,
+        timestamp_iso: str,
+        position_before: Optional[dict[str, Any]],
+        position_after: Optional[dict[str, Any]],
+    ) -> Optional[str]:
+        action = outcome.decision.action
+        sym = outcome.decision.symbol
+        qty = outcome.decision.quantity
+        exec_price = outcome.executed_price or outcome.decision.price or 0.0
+        time_part = timestamp_iso.split("T", 1)[1][:8] + "Z" if "T" in timestamp_iso else timestamp_iso
+        prefix = "[DRY] " if outcome.dry_run else ""
+
+        explicit_close = action in (Action.CLOSE, Action.CLOSE_LONG, Action.CLOSE_SHORT)
+        flipped_close = (
+            position_before is not None
+            and position_after is None
+            and action in (Action.BUY, Action.SELL)
+        )
+        is_close = explicit_close or flipped_close
+
+        if is_close:
+            pos = position_before or {}
+            side = "LONG" if pos.get("direction") == "BUY" else "SHORT"
+            entry = pos.get("entry_price", 0.0) or 0.0
+            pnl = outcome.pnl_usdt
+            if pnl is None:
+                pnl_str, pct_str = "n/a", ""
+            else:
+                sign = "+" if pnl >= 0 else "-"
+                pnl_str = f"{sign}${abs(pnl):,.2f}"
+                pct_str = ""
+                if entry > 0 and qty > 0:
+                    pct = pnl / (entry * qty) * 100
+                    pct_str = f" ({sign}{abs(pct):.2f}%)"
+            reasoning = outcome.decision.reasoning or ""
+            reason = reasoning if reasoning.startswith("monitor_") else "llm"
+            return (
+                f"{time_part} {prefix}CLOSE {side:<5} {sym} qty={qty} "
+                f"entry=${entry:,.2f} exit=${exec_price:,.2f} pnl={pnl_str}{pct_str} reason={reason}"
+            )
+
+        if action in (Action.BUY, Action.SELL):
+            pos = position_after or {}
+            sl = pos.get("sl_price")
+            tp = pos.get("tp_price")
+            sl_str = f"${sl:,.2f}" if sl else "—"
+            tp_str = f"${tp:,.2f}" if tp else "—"
+            return (
+                f"{time_part} {prefix}OPEN  {action.value:<4} {sym} qty={qty} "
+                f"entry=${exec_price:,.2f} sl={sl_str} tp={tp_str} source={outcome.decision.source}"
+            )
+
+        return None
 
     def append_cycle_log(
         self,

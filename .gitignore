@@ -184,3 +184,6 @@ models/
 
 # Local benchmarking artifacts
 .benchmarks/
+
+.kiro
+.claude

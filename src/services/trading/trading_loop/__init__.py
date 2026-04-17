@@ -394,6 +394,7 @@ class TradingLoop(
 
             self.memory.record(outcome)
             self._check_slippage(outcome, snapshots)
+            _pos_before = self._open_positions.get(symbol)
             if not outcome.dry_run and outcome.order_id:
                 await self._update_open_positions(outcome)
                 # Deduct the executed notional from the local balance so the
@@ -407,6 +408,12 @@ class TradingLoop(
             last_outcome = outcome
 
             self.persistence.append_trade(outcome, timestamp_iso)
+            self.persistence.append_trade_event(
+                outcome,
+                timestamp_iso,
+                position_before=_pos_before,
+                position_after=self._open_positions.get(symbol),
+            )
             self.persistence.append_cycle_log(
                 timestamp_iso=timestamp_iso,
                 cycle=self._cycle,
