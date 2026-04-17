@@ -6,7 +6,7 @@ Manages statistics state, recalculation, and context formatting.
 import logging
 from typing import TYPE_CHECKING
 
-from src.services.trading.statistics_calculator import StatisticsCalculator
+from src.services.trading.statistics.calculator import StatisticsCalculator
 
 if TYPE_CHECKING:
     from src.infrastructure.storage.persistence import Persistence

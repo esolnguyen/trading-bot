@@ -13,7 +13,9 @@ logger = logging.getLogger(__name__)
 
 def try_build_vector_memory(store: ChromaStore) -> Any | None:
     try:
-        from src.infrastructure.storage.vector_memory import VectorMemoryService  # noqa: PLC0415
+        from src.infrastructure.storage.vector_memory import (
+            VectorMemoryService,
+        )  # noqa: PLC0415
 
         return VectorMemoryService(store)
     except Exception:  # noqa: BLE001
@@ -41,7 +43,9 @@ def try_build_memory_service(
     persistence: Persistence, settings: Settings
 ) -> Any | None:
     try:
-        from src.services.trading.memory_service import TradingMemoryService  # noqa: PLC0415
+        from src.services.trading.memory_service import (
+            TradingMemoryService,
+        )  # noqa: PLC0415
 
         return TradingMemoryService(persistence=persistence, logger=logger)
     except Exception:  # noqa: BLE001
@@ -53,7 +57,9 @@ def try_build_statistics_service(
     persistence: Persistence, settings: Settings
 ) -> Any | None:
     try:
-        from src.services.trading.statistics_service import TradingStatisticsService  # noqa: PLC0415
+        from src.services.trading.statistics.service import (
+            TradingStatisticsService,
+        )  # noqa: PLC0415
 
         return TradingStatisticsService(persistence=persistence, logger=logger)
     except Exception:  # noqa: BLE001
@@ -70,7 +76,9 @@ def try_build_trading_strategy(
     settings: Settings,
 ) -> Any | None:
     try:
-        from src.services.trading.trading_strategy import TradingStrategy  # noqa: PLC0415
+        from src.services.trading.trading_strategy import (
+            TradingStrategy,
+        )  # noqa: PLC0415
 
         symbol = settings.trading_symbols[0] if settings.trading_symbols else "BTCUSDT"
         return TradingStrategy(
@@ -95,8 +103,12 @@ def try_build_discord_notifier(settings: Settings) -> Any | None:
         import discord  # noqa: PLC0415
 
         from src.infrastructure.ai.unified_parser import UnifiedParser  # noqa: PLC0415
-        from src.interfaces.notifiers.discord_notifier import DiscordNotifier  # noqa: PLC0415
-        from src.interfaces.notifiers.filehandler import DiscordFileHandler  # noqa: PLC0415
+        from src.interfaces.notifiers.discord_notifier import (
+            DiscordNotifier,
+        )  # noqa: PLC0415
+        from src.interfaces.notifiers.filehandler import (
+            DiscordFileHandler,
+        )  # noqa: PLC0415
         from src.interfaces.notifiers.filehandler_components.cleanup_scheduler import (
             CleanupScheduler,
         )  # noqa: PLC0415
