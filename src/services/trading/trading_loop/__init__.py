@@ -22,10 +22,10 @@ from src.core.config import Settings
 from src.domain.trading import Action, TradeDecision
 from src.interfaces.notifiers import ConsoleNotifier, LoggerNotifier
 
-from .trading_loop_context import ContextMixin
-from .trading_loop_decisions import DecisionsMixin
-from .trading_loop_monitor import MonitorMixin
-from .trading_loop_positions import PositionsMixin
+from .context import ContextMixin
+from .decisions import DecisionsMixin
+from .monitor import MonitorMixin
+from .positions import PositionsMixin
 
 
 class TradingLoop(
