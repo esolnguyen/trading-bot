@@ -7,7 +7,7 @@ import logging
 from typing import Any, Awaitable, Callable
 
 from src.core.config import Settings
-from src.infrastructure.ai.llm_parsing import (
+from .parsing import (
     LLMCallResult,
     fallback_decision,
     is_retryable_error,

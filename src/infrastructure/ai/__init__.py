@@ -1,5 +1,5 @@
 """AI provider adapters."""
 
-from .llm_manager import LLMManager
+from .llm import LLMManager
 
 __all__ = ["LLMManager"]

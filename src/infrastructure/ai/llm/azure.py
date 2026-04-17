@@ -9,7 +9,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from src.core.config import Settings
 from src.domain.trading import TradeDecision
-from src.infrastructure.ai.llm_parsing import (
+from .parsing import (
     LLMCallResult,
     ParseError,
     ResponseShapeError,

@@ -7,7 +7,7 @@ import json
 
 from src.core.config import Settings
 from src.domain.trading import Action
-from src.infrastructure.ai.llm_manager import (
+from src.infrastructure.ai.llm import (
     LLMManager,
     _normalize_azure_openai_endpoint,
     _should_use_azure_foundry_anthropic_client,

@@ -16,7 +16,7 @@ from typing import Any, Callable, Dict, List, Union
 
 from src.core.config import Settings
 from src.domain.trading import TradeDecision
-from src.infrastructure.ai.llm_azure import (
+from .azure import (
     _AnthropicResponseAdapter,
     _normalize_azure_openai_endpoint,
     _should_use_azure_foundry_anthropic_client,
@@ -25,13 +25,13 @@ from src.infrastructure.ai.llm_azure import (
     default_azure_client_factory,
     extract_content,
 )
-from src.infrastructure.ai.llm_multi_provider import (
+from .multi_provider import (
     build_orchestrator,
     build_unified_parser,
     close_orchestrator,
     decide_multi_provider,
 )
-from src.infrastructure.ai.llm_parsing import (
+from .parsing import (
     MAX_LOG_TEXT_CHARS,
     LLMCallResult,
     ParseError,
