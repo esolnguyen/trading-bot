@@ -7,8 +7,8 @@ with a pure-Python fallback when numba is not installed.
 """
 
 # Base classes
-from src.services.analysis.indicators.base.indicator_base import IndicatorBase
-from src.services.analysis.indicators.base.technical_indicators import TechnicalIndicators
+from src.services.analysis.indicators.indicator_base import IndicatorBase
+from src.services.analysis.indicators.technical_indicators import TechnicalIndicators
 
 # Constants
 from src.services.analysis.indicators.constants import INDICATOR_THRESHOLDS
@@ -33,9 +33,9 @@ from src.services.analysis.indicators.price import (
 
 # Sentiment indicators
 from src.services.analysis.indicators.sentiment import (
+    FearGreedConfig,
     fear_and_greed_index_numba,
 )
-from src.services.analysis.indicators.sentiment.sentiment_indicators import FearGreedConfig
 
 # Statistical indicators
 from src.services.analysis.indicators.statistical import (

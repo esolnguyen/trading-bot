@@ -13,7 +13,7 @@ from src.services.analysis.indicators._numba_compat import njit
 
 from src.services.analysis.indicators.overlap import ema_numba
 from src.services.analysis.indicators.volatility import atr_numba
-from .trend_calculation_utils import (
+from .calculation_utils import (
     calculate_directional_movement, calculate_smoothed_values,
     calculate_directional_indicators, calculate_ichimoku_lines,
     calculate_ichimoku_spans, calculate_band_adjustments,

@@ -6,9 +6,9 @@ from typing import Tuple
 
 import numpy as np
 
-from src.services.analysis.indicators.sentiment import fear_and_greed_index_numba
-from src.services.analysis.indicators.sentiment.sentiment_indicators import (
+from src.services.analysis.indicators.sentiment import (
     FearGreedConfig,
+    fear_and_greed_index_numba,
 )
 from src.services.analysis.indicators.statistical import (
     apa_adaptive_eot_numba, calculate_eot_numba, entropy_numba, hurst_numba,
