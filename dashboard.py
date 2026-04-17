@@ -16,9 +16,9 @@ from src.dashboard.loaders import (
     load_cycle_logs,
     load_position,
 )
-from src.dashboard.tabs_logs_chart import render_cycle_logs, render_price_chart
-from src.dashboard.tabs_stats_costs import render_api_costs, render_stats
-from src.dashboard.tabs_trades_portfolio import render_portfolio, render_trades
+from src.dashboard.tabs.logs_chart import render_cycle_logs, render_price_chart
+from src.dashboard.tabs.stats_costs import render_api_costs, render_stats
+from src.dashboard.tabs.trades_portfolio import render_portfolio, render_trades
 
 
 st.set_page_config(
