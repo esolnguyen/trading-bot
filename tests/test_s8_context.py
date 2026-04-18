@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
-from src.core.config import Settings
-from src.domain.analysis import IndicatorSet, PatternResult, Signal, TechnicalAnalysis
-from src.domain.market import MarketSnapshot, OHLCVCandle
-from src.services.analysis import ContextBuilder, build_system_prompt
+from src.mcp_servers.config import Settings
+from src.mcp_servers.shared.domain.analysis import (
+    IndicatorSet,
+    PatternResult,
+    Signal,
+    TechnicalAnalysis,
+)
+from src.mcp_servers.shared.domain.market import MarketSnapshot, OHLCVCandle
+from src.legacy.services.analysis import ContextBuilder, build_system_prompt
 
 
 def build_settings(*, model_supports_vision: bool = False) -> Settings:
@@ -22,7 +27,9 @@ def build_settings(*, model_supports_vision: bool = False) -> Settings:
 
 
 def candle() -> OHLCVCandle:
-    return OHLCVCandle(timestamp=1, open=100.0, high=101.0, low=99.0, close=100.0, volume=1000.0)
+    return OHLCVCandle(
+        timestamp=1, open=100.0, high=101.0, low=99.0, close=100.0, volume=1000.0
+    )
 
 
 def snapshot(symbol: str, price: float, change: float) -> MarketSnapshot:
@@ -149,12 +156,9 @@ def test_chart_base64_only_included_when_vision_enabled() -> None:
         "ETHUSDT": pattern("ETHUSDT", chart_png_b64="CCCCDDDD"),
     }
 
-    disabled_message = ContextBuilder(build_settings(model_supports_vision=False)).build(
-        snapshots,
-        analyses,
-        patterns,
-        "none",
-    )[1]
+    disabled_message = ContextBuilder(
+        build_settings(model_supports_vision=False)
+    ).build(snapshots, analyses, patterns, "none",)[1]
     enabled_message = ContextBuilder(build_settings(model_supports_vision=True)).build(
         snapshots,
         analyses,

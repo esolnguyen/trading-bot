@@ -1,0 +1,22 @@
+"""Driver: XGBoost direction classifier."""
+
+from __future__ import annotations
+
+import logging
+
+from src.enrich_knowledge.config import EnrichKnowledgeSettings
+
+from ._runner import run_script
+
+logger = logging.getLogger(__name__)
+
+
+def train(settings: EnrichKnowledgeSettings, dry_run: bool = False) -> None:
+    timeframe = settings.ml_training.ml_timeframe
+    for symbol in settings.ml_training.training_symbols:
+        extra = ["--timeframe", timeframe, "--symbol", symbol.lower()]
+        rc = run_script("train_direction.py", dry_run=dry_run, extra_args=extra)
+        if rc != 0 and not dry_run:
+            logger.warning(
+                "direction training for %s %s returned %d", symbol, timeframe, rc
+            )

@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import base64
 
-from src.domain.analysis import IndicatorSet
-from src.domain.market import OHLCVCandle
-from src.services.analysis import ChartGenerator, PatternAnalyzer
+from src.mcp_servers.shared.domain.analysis import IndicatorSet
+from src.mcp_servers.shared.domain.market import OHLCVCandle
+from src.legacy.services.analysis import ChartGenerator, PatternAnalyzer
 
 
-def candle(ts: int, open_: float, high: float, low: float, close: float, volume: float = 1000.0) -> OHLCVCandle:
-    return OHLCVCandle(timestamp=ts, open=open_, high=high, low=low, close=close, volume=volume)
+def candle(
+    ts: int, open_: float, high: float, low: float, close: float, volume: float = 1000.0
+) -> OHLCVCandle:
+    return OHLCVCandle(
+        timestamp=ts, open=open_, high=high, low=low, close=close, volume=volume
+    )
 
 
 def flat_candles(count: int = 60) -> list[OHLCVCandle]:
@@ -20,9 +24,36 @@ def flat_candles(count: int = 60) -> list[OHLCVCandle]:
 def double_top_candles() -> list[OHLCVCandle]:
     """Two similar highs (≈103/103.5) separated by a deep trough, then decline."""
     values = [
-        90, 93, 96, 99, 101, 103, 101, 98, 94, 90,
-        90, 91, 93, 97, 101, 103.5, 101, 97, 93, 89,
-        85, 82, 80, 78, 77, 76, 75, 74, 73, 72,
+        90,
+        93,
+        96,
+        99,
+        101,
+        103,
+        101,
+        98,
+        94,
+        90,
+        90,
+        91,
+        93,
+        97,
+        101,
+        103.5,
+        101,
+        97,
+        93,
+        89,
+        85,
+        82,
+        80,
+        78,
+        77,
+        76,
+        75,
+        74,
+        73,
+        72,
     ]
     candles: list[OHLCVCandle] = []
     for index, close in enumerate(values):
@@ -35,9 +66,36 @@ def double_top_candles() -> list[OHLCVCandle]:
 
 def double_bottom_candles() -> list[OHLCVCandle]:
     values = [
-        110, 108, 106, 103, 100, 98, 100, 103, 106, 109,
-        107, 104, 101, 99, 97.5, 100, 104, 108, 111, 114,
-        116, 117, 118, 119, 120, 121, 122, 123, 124, 125,
+        110,
+        108,
+        106,
+        103,
+        100,
+        98,
+        100,
+        103,
+        106,
+        109,
+        107,
+        104,
+        101,
+        99,
+        97.5,
+        100,
+        104,
+        108,
+        111,
+        114,
+        116,
+        117,
+        118,
+        119,
+        120,
+        121,
+        122,
+        123,
+        124,
+        125,
     ]
     candles: list[OHLCVCandle] = []
     for index, close in enumerate(values):

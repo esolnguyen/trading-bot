@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import logging
 
-from src.core.config import Settings
-from src.domain.trading import Action, TradeDecision
-from src.services.trading import RiskManager
+from src.mcp_servers.config import Settings
+from src.legacy.domain.trading import Action, TradeDecision
+from src.legacy.services.trading import RiskManager
 
 
-def build_settings(*, bot_enabled: bool = True, bot_dry_run: bool = False, max_order_usdt: float = 50.0) -> Settings:
+def build_settings(
+    *, bot_enabled: bool = True, bot_dry_run: bool = False, max_order_usdt: float = 50.0
+) -> Settings:
     if not bot_enabled:
         mode = "off"
     elif bot_dry_run:
@@ -28,7 +30,9 @@ def build_settings(*, bot_enabled: bool = True, bot_dry_run: bool = False, max_o
     )
 
 
-def buy_decision(quantity: float = 1.0, price: float | None = 10.0, order_type: str = "MARKET") -> TradeDecision:
+def buy_decision(
+    quantity: float = 1.0, price: float | None = 10.0, order_type: str = "MARKET"
+) -> TradeDecision:
     return TradeDecision(
         symbol="BTCUSDT",
         action=Action.BUY,
@@ -56,7 +60,10 @@ def test_bot_enabled_false_always_returns_hold(caplog) -> None:
 def test_bot_dry_run_true_allows_decision_through() -> None:
     manager = RiskManager(build_settings(bot_enabled=True, bot_dry_run=True))
 
-    result = manager.validate(buy_decision(quantity=1.0, price=10.0), {"USDT": 1000, "prices": {"BTCUSDT": 10}})
+    result = manager.validate(
+        buy_decision(quantity=1.0, price=10.0),
+        {"USDT": 1000, "prices": {"BTCUSDT": 10}},
+    )
 
     assert result.decision.action is Action.BUY
     assert result.dry_run is True
@@ -65,7 +72,10 @@ def test_bot_dry_run_true_allows_decision_through() -> None:
 def test_order_exceeding_max_is_clamped_not_rejected() -> None:
     manager = RiskManager(build_settings(bot_enabled=True, max_order_usdt=50.0))
 
-    result = manager.validate(buy_decision(quantity=10.0, price=20.0), {"USDT": 1000, "prices": {"BTCUSDT": 20}})
+    result = manager.validate(
+        buy_decision(quantity=10.0, price=20.0),
+        {"USDT": 1000, "prices": {"BTCUSDT": 20}},
+    )
 
     assert result.decision.action is Action.BUY
     assert round(result.decision.quantity, 8) == 2.5
@@ -75,7 +85,9 @@ def test_order_exceeding_max_is_clamped_not_rejected() -> None:
 def test_insufficient_balance_returns_hold_with_reason() -> None:
     manager = RiskManager(build_settings(bot_enabled=True))
 
-    result = manager.validate(buy_decision(quantity=5.0, price=10.0), {"USDT": 20, "prices": {"BTCUSDT": 10}})
+    result = manager.validate(
+        buy_decision(quantity=5.0, price=10.0), {"USDT": 20, "prices": {"BTCUSDT": 10}}
+    )
 
     assert result.decision.action is Action.HOLD
     assert "insufficient_balance" in result.decision.reasoning
@@ -86,7 +98,10 @@ def test_dry_run_and_hold_logged_at_info_or_debug(caplog) -> None:
     caplog.set_level(logging.DEBUG)
     manager = RiskManager(build_settings(bot_enabled=True, bot_dry_run=True))
 
-    manager.validate(TradeDecision(symbol="BTCUSDT", action=Action.HOLD), {"USDT": 1000, "prices": {"BTCUSDT": 10}})
+    manager.validate(
+        TradeDecision(symbol="BTCUSDT", action=Action.HOLD),
+        {"USDT": 1000, "prices": {"BTCUSDT": 10}},
+    )
 
     # dry_run and HOLD passthrough should not pollute WARNING/ERROR channels
     assert not any(record.levelno >= logging.WARNING for record in caplog.records)
@@ -97,7 +112,10 @@ def test_dry_run_and_hold_logged_at_info_or_debug(caplog) -> None:
 def test_limit_order_requires_price() -> None:
     manager = RiskManager(build_settings(bot_enabled=True))
 
-    result = manager.validate(buy_decision(quantity=1.0, price=None, order_type="LIMIT"), {"USDT": 1000, "prices": {"BTCUSDT": 10}})
+    result = manager.validate(
+        buy_decision(quantity=1.0, price=None, order_type="LIMIT"),
+        {"USDT": 1000, "prices": {"BTCUSDT": 10}},
+    )
 
     assert result.decision.action is Action.HOLD
     assert result.decision.reasoning == "limit_price_required"

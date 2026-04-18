@@ -6,7 +6,7 @@ import os
 
 import pytest
 
-from src.core.config import Settings
+from src.mcp_servers.config import Settings
 
 
 REQUIRED_ENV = {
@@ -55,7 +55,9 @@ def _apply_required_env(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv(key, value)
 
 
-def test_missing_required_field_raises_value_error(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_missing_required_field_raises_value_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _apply_required_env(monkeypatch)
     monkeypatch.delenv("AZURE_ENDPOINT", raising=False)
 
@@ -117,7 +119,9 @@ def test_repr_redacts_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "cc-key-1234" not in rendered
 
 
-def test_binance_product_and_base_url_can_be_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_binance_product_and_base_url_can_be_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _apply_required_env(monkeypatch)
     monkeypatch.setenv("BINANCE_PRODUCT", "usdt_futures")
     monkeypatch.setenv("BINANCE_BASE_URL", "https://demo-fapi.binance.com")

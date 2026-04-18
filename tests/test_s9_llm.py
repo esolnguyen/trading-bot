@@ -5,9 +5,9 @@ from __future__ import annotations
 import asyncio
 import json
 
-from src.core.config import Settings
-from src.domain.trading import Action
-from src.infrastructure.ai.llm import (
+from src.mcp_servers.config import Settings
+from src.legacy.domain.trading import Action
+from src.mcp_servers.shared.infrastructure.ai.llm import (
     LLMManager,
     _normalize_azure_openai_endpoint,
     _should_use_azure_foundry_anthropic_client,
@@ -43,7 +43,9 @@ class FakeResponse:
 
 
 class FakeUsage:
-    def __init__(self, prompt_tokens: int, completion_tokens: int, total_tokens: int) -> None:
+    def __init__(
+        self, prompt_tokens: int, completion_tokens: int, total_tokens: int
+    ) -> None:
         self.prompt_tokens = prompt_tokens
         self.completion_tokens = completion_tokens
         self.total_tokens = total_tokens
@@ -92,7 +94,11 @@ def test_valid_json_maps_to_trade_decision() -> None:
     assert decision.quantity == 0.001
     assert decision.confidence == 0.82
     assert decision.source == "azure"
-    assert manager.last_usage == {"prompt_tokens": 120, "completion_tokens": 35, "total_tokens": 155}
+    assert manager.last_usage == {
+        "prompt_tokens": 120,
+        "completion_tokens": 35,
+        "total_tokens": 155,
+    }
     assert manager.last_error is None
     assert manager.last_prompt["system_prompt"] == "system"
     assert manager.last_prompt["user_message"] == "user"
@@ -176,7 +182,9 @@ def test_http_429_retries_twice_then_returns_hold() -> None:
         sleep_calls.append(delay)
 
     client = FakeClient([RetryableError(429), RetryableError(429), RetryableError(429)])
-    manager = LLMManager(build_settings(), client_factory=lambda _settings: client, sleep_func=fake_sleep)
+    manager = LLMManager(
+        build_settings(), client_factory=lambda _settings: client, sleep_func=fake_sleep
+    )
 
     decision = asyncio.run(manager.decide("system", "user"))
 
@@ -200,8 +208,14 @@ def test_vision_message_includes_image_only_when_enabled() -> None:
     enabled_client = FakeClient([FakeResponse(payload)])
     disabled_client = FakeClient([FakeResponse(payload)])
 
-    enabled = LLMManager(build_settings(model_supports_vision=True), client_factory=lambda _settings: enabled_client)
-    disabled = LLMManager(build_settings(model_supports_vision=False), client_factory=lambda _settings: disabled_client)
+    enabled = LLMManager(
+        build_settings(model_supports_vision=True),
+        client_factory=lambda _settings: enabled_client,
+    )
+    disabled = LLMManager(
+        build_settings(model_supports_vision=False),
+        client_factory=lambda _settings: disabled_client,
+    )
 
     asyncio.run(enabled.decide("system", "user", chart_b64="AAAABBBB"))
     asyncio.run(disabled.decide("system", "user", chart_b64="AAAABBBB"))
@@ -224,7 +238,12 @@ def test_unsupported_response_format_retries_without_it() -> None:
             "reasoning": "Momentum confirmed",
         }
     )
-    client = FakeClient([RuntimeError("Unsupported `response_format` {'type': 'json_object'}"), FakeResponse(payload)])
+    client = FakeClient(
+        [
+            RuntimeError("Unsupported `response_format` {'type': 'json_object'}"),
+            FakeResponse(payload),
+        ]
+    )
     manager = LLMManager(build_settings(), client_factory=lambda _settings: client)
 
     decision = asyncio.run(manager.decide("system", "user"))
@@ -246,13 +265,22 @@ def test_normalize_azure_openai_endpoint_strips_chat_completions_suffix() -> Non
 def test_foundry_endpoint_only_uses_anthropic_for_claude_deployments() -> None:
     endpoint = "https://thang-sw-central.services.ai.azure.com/models"
 
-    assert _should_use_azure_foundry_anthropic_client(endpoint, "claude-3-7-sonnet") is True
+    assert (
+        _should_use_azure_foundry_anthropic_client(endpoint, "claude-3-7-sonnet")
+        is True
+    )
     assert _should_use_azure_foundry_anthropic_client(endpoint, "grok-3-mini") is False
-    assert _should_use_azure_foundry_anthropic_client(
-        "https://thang-sw-central.services.ai.azure.com/anthropic/v1/messages",
-        "custom-deployment",
-    ) is True
-    assert _should_use_azure_foundry_anthropic_client(
-        "https://example-resource.openai.azure.com",
-        "claude-3-7-sonnet",
-    ) is False
+    assert (
+        _should_use_azure_foundry_anthropic_client(
+            "https://thang-sw-central.services.ai.azure.com/anthropic/v1/messages",
+            "custom-deployment",
+        )
+        is True
+    )
+    assert (
+        _should_use_azure_foundry_anthropic_client(
+            "https://example-resource.openai.azure.com",
+            "claude-3-7-sonnet",
+        )
+        is False
+    )

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import asyncio
 
-from src.core.config import Settings
-from src.domain.trading import Action, TradeDecision
-from src.services.trading import Executor
+from src.mcp_servers.config import Settings
+from src.legacy.domain.trading import Action, TradeDecision
+from src.legacy.services.trading import Executor
 
 
 def build_settings(**overrides) -> Settings:
@@ -41,43 +41,61 @@ def buy_decision() -> TradeDecision:
     )
 
 
+class _FakeSession:
+    def __init__(self) -> None:
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+
 class FakeClient:
+    """Mimics the ``UMFutures`` surface used by the executor."""
+
     def __init__(self, payload):
         self.payload = payload
-        self.calls = []
-        self.cancel_calls = []
-        self.closed = False
+        self.calls: list[dict] = []
+        self.cancel_calls: list[tuple[str, int]] = []
         self._positions: list[dict] = []
+        self.session = _FakeSession()
 
-    def create_order(self, **kwargs):
+    def new_order(self, **kwargs):
         self.calls.append(kwargs)
         if isinstance(self.payload, Exception):
             raise self.payload
         return self.payload
 
-    def cancel_order(self, symbol: str, order_id: int):
-        self.cancel_calls.append((symbol, order_id))
+    def cancel_order(self, symbol: str, orderId: int):
+        self.cancel_calls.append((symbol, orderId))
         return {}
 
-    def get_open_positions(self, symbol: str):
+    def get_position_risk(self, symbol: str):
         return self._positions
 
-    def get_exchange_info(self, symbol: str):
+    def exchange_info(self):
         return {
-            "symbols": [{
-                "filters": [
-                    {"filterType": "LOT_SIZE", "stepSize": "0.00100000"},
-                    {"filterType": "MARKET_LOT_SIZE", "stepSize": "0.00100000"},
-                    {"filterType": "PRICE_FILTER", "tickSize": "0.01000000"},
-                ]
-            }]
+            "symbols": [
+                {
+                    "symbol": "BTCUSDT",
+                    "filters": [
+                        {"filterType": "LOT_SIZE", "stepSize": "0.00100000"},
+                        {"filterType": "MARKET_LOT_SIZE", "stepSize": "0.00100000"},
+                        {"filterType": "PRICE_FILTER", "tickSize": "0.01000000"},
+                    ],
+                },
+                {
+                    "symbol": "ETHUSDT",
+                    "filters": [
+                        {"filterType": "LOT_SIZE", "stepSize": "0.00100000"},
+                        {"filterType": "MARKET_LOT_SIZE", "stepSize": "0.00100000"},
+                        {"filterType": "PRICE_FILTER", "tickSize": "0.01000000"},
+                    ],
+                },
+            ]
         }
 
-    def close_connection(self):
-        self.closed = True
 
-
-def test_dry_run_never_calls_create_order() -> None:
+def test_dry_run_never_calls_new_order() -> None:
     client = FakeClient({})
     executor = Executor(build_settings(), api_client_factory=lambda: client)
 
@@ -120,7 +138,7 @@ def test_successful_market_order_returns_outcome_with_order_id() -> None:
     assert outcome.executed_price == 64250.5
     assert outcome.dry_run is False
     assert client.calls[0]["symbol"] == "BTCUSDT"
-    assert client.closed is True
+    assert client.session.closed is True
 
 
 def test_api_error_raises_runtime_error() -> None:
@@ -141,13 +159,16 @@ def test_api_error_raises_runtime_error() -> None:
 # Bracket order tests
 # ---------------------------------------------------------------------------
 
+
 def test_place_bracket_orders_long_entry_correct_params() -> None:
     """BUY entry → close side is SELL; SL below, TP above entry price."""
     client = FakeClient({"orderId": 999})
     executor = Executor(futures_settings(), api_client_factory=lambda: client)
 
     sl_id, tp_id = asyncio.run(
-        executor.place_bracket_orders("ETHUSDT", "BUY", sl_price=2000.0, tp_price=2200.0)
+        executor.place_bracket_orders(
+            "ETHUSDT", "BUY", sl_price=2000.0, tp_price=2200.0
+        )
     )
     asyncio.run(executor.close())
 
@@ -169,7 +190,9 @@ def test_place_bracket_orders_short_entry_correct_params() -> None:
     executor = Executor(futures_settings(), api_client_factory=lambda: client)
 
     asyncio.run(
-        executor.place_bracket_orders("ETHUSDT", "SELL", sl_price=2100.0, tp_price=1900.0)
+        executor.place_bracket_orders(
+            "ETHUSDT", "SELL", sl_price=2100.0, tp_price=1900.0
+        )
     )
     asyncio.run(executor.close())
 
@@ -183,7 +206,9 @@ def test_place_bracket_orders_returns_none_on_api_failure() -> None:
     executor = Executor(futures_settings(), api_client_factory=lambda: client)
 
     sl_id, tp_id = asyncio.run(
-        executor.place_bracket_orders("ETHUSDT", "BUY", sl_price=2000.0, tp_price=2200.0)
+        executor.place_bracket_orders(
+            "ETHUSDT", "BUY", sl_price=2000.0, tp_price=2200.0
+        )
     )
     asyncio.run(executor.close())
 
@@ -229,12 +254,11 @@ def test_get_live_position_size_sums_amounts() -> None:
 def test_get_live_position_size_returns_inf_on_error() -> None:
     """API failure must return inf so a transient error never clears local state."""
     client = FakeClient({})
-    client._positions = RuntimeError("network error")
 
     def raise_on_call(symbol):
         raise RuntimeError("network error")
 
-    client.get_open_positions = raise_on_call
+    client.get_position_risk = raise_on_call
     executor = Executor(futures_settings(), api_client_factory=lambda: client)
 
     size = asyncio.run(executor.get_live_position_size("ETHUSDT"))
@@ -247,6 +271,7 @@ def test_get_live_position_size_returns_inf_on_error() -> None:
 # Close action side mapping tests
 # ---------------------------------------------------------------------------
 
+
 def test_close_long_sends_sell_side() -> None:
     """CLOSE_LONG must send side=SELL to Binance, not 'CLOSE_LONG'."""
     client = FakeClient(
@@ -254,8 +279,11 @@ def test_close_long_sends_sell_side() -> None:
     )
     executor = Executor(build_settings(), api_client_factory=lambda: client)
     decision = TradeDecision(
-        symbol="BTCUSDT", action=Action.CLOSE_LONG,
-        quantity=0.001, order_type="MARKET", timestamp=1700000000,
+        symbol="BTCUSDT",
+        action=Action.CLOSE_LONG,
+        quantity=0.001,
+        order_type="MARKET",
+        timestamp=1700000000,
     )
 
     outcome = asyncio.run(executor.execute(decision, dry_run=False))
@@ -272,8 +300,11 @@ def test_close_short_sends_buy_side_with_reduce_only() -> None:
     )
     executor = Executor(futures_settings(), api_client_factory=lambda: client)
     decision = TradeDecision(
-        symbol="ETHUSDT", action=Action.CLOSE_SHORT,
-        quantity=0.5, order_type="MARKET", timestamp=1700000000,
+        symbol="ETHUSDT",
+        action=Action.CLOSE_SHORT,
+        quantity=0.5,
+        order_type="MARKET",
+        timestamp=1700000000,
     )
 
     outcome = asyncio.run(executor.execute(decision, dry_run=False))

@@ -31,20 +31,24 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from dotenv import load_dotenv
+
 load_dotenv(override=False)
 
-from src.core.config import Settings
-from src.infrastructure.binance.rest_client import BinanceRestClient
+from src.mcp_servers.config import Settings
+from src.mcp_servers.shared.infrastructure.binance.client import (
+    build_client,
+    close_client,
+)
 
 # Default row counts per interval — enough for full Binance history from 2017.
 # Training scripts will take a recent slice; having more data never hurts.
 _DEFAULT_ROWS: dict[str, int] = {
-    "1m":  43_200,   # ~30 days (Binance REST keeps ~30 days of 1m data)
-    "5m":  17_280,   # ~60 days
-    "15m": 70_000,   # ~2 years
-    "1h":  17_520,   # ~2 years
-    "4h":  16_500,   # ~full history since 2017
-    "1d":  2_800,    # ~full history since 2017
+    "1m": 43_200,  # ~30 days (Binance REST keeps ~30 days of 1m data)
+    "5m": 17_280,  # ~60 days
+    "15m": 70_000,  # ~2 years
+    "1h": 17_520,  # ~2 years
+    "4h": 16_500,  # ~full history since 2017
+    "1d": 2_800,  # ~full history since 2017
 }
 
 _ML_TIMEFRAMES = ("1m", "5m", "15m", "1h", "4h")
@@ -67,7 +71,7 @@ def _read_last_timestamp(path: Path) -> int | None:
 
 
 def backfill(
-    client: BinanceRestClient,
+    client,
     symbol: str,
     interval: str,
     target_rows: int,
@@ -85,9 +89,13 @@ def backfill(
         start_ms = last_ts + 1
 
         while True:
-            kwargs: dict = dict(symbol=symbol, interval=interval, limit=1000, startTime=start_ms)
             try:
-                batch = client.get_klines(**kwargs)
+                batch = client.klines(
+                    symbol=symbol,
+                    interval=interval,
+                    limit=1000,
+                    startTime=start_ms,
+                )
             except Exception as exc:
                 print(f"  ERROR: {exc} — retrying in 10s")
                 time.sleep(10)
@@ -119,17 +127,19 @@ def backfill(
 
     else:
         # --- FULL BACKFILL: walk backwards from now until target_rows reached ---
-        print(f"Backfilling {symbol} {interval} → {output_path} (target: {target_rows:,} rows)")
+        print(
+            f"Backfilling {symbol} {interval} → {output_path} (target: {target_rows:,} rows)"
+        )
         rows: list[list] = []
         end_ms: int | None = None
 
         while len(rows) < target_rows:
-            kwargs = dict(symbol=symbol, interval=interval, limit=1000)
+            kwargs: dict = dict(symbol=symbol, interval=interval, limit=1000)
             if end_ms is not None:
                 kwargs["endTime"] = end_ms
 
             try:
-                batch = client.get_klines(**kwargs)
+                batch = client.klines(**kwargs)
             except Exception as exc:
                 print(f"  ERROR: {exc} — retrying in 10s")
                 time.sleep(10)
@@ -155,28 +165,34 @@ def backfill(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Backfill OHLCV data from Binance")
-    parser.add_argument("--symbol",   default=None, help="Symbol (default: from CRYPTO_PAIR in .env)")
-    parser.add_argument("--interval", default=None,
-                        help=f"Timeframe: {', '.join(_ML_TIMEFRAMES)}, or 1d. "
-                             "Defaults to ML_TIMEFRAME from .env (fallback: 4h)")
-    parser.add_argument("--rows",     type=int, default=None, help="Override row count")
-    parser.add_argument("--all",      action="store_true",
-                        help="Fetch all three ML timeframes (15m, 1h, 4h) plus 1d")
+    parser.add_argument(
+        "--symbol", default=None, help="Symbol (default: from CRYPTO_PAIR in .env)"
+    )
+    parser.add_argument(
+        "--interval",
+        default=None,
+        help=f"Timeframe: {', '.join(_ML_TIMEFRAMES)}, or 1d. "
+        "Defaults to ML_TIMEFRAME from .env (fallback: 4h)",
+    )
+    parser.add_argument("--rows", type=int, default=None, help="Override row count")
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Fetch all three ML timeframes (15m, 1h, 4h) plus 1d",
+    )
     args = parser.parse_args()
 
     settings = Settings.from_env()
-    client = BinanceRestClient(
-        api_key=settings.binance_api_key,
-        api_secret=settings.binance_api_secret,
-        product=settings.binance_product,
-        testnet=settings.binance_testnet,
-        base_url=settings.binance_base_url,
-    )
+    client = build_client(settings)
 
     if args.symbol:
         symbols = [args.symbol.replace("/", "").upper()]
     else:
-        symbols = [s.upper() for s in settings.trading_symbols] if settings.trading_symbols else ["BTCUSDT"]
+        symbols = (
+            [s.upper() for s in settings.trading_symbols]
+            if settings.trading_symbols
+            else ["BTCUSDT"]
+        )
 
     if args.all:
         intervals = list(_ML_TIMEFRAMES) + ["1d"]
@@ -184,11 +200,18 @@ def main() -> None:
         interval = args.interval or settings.ml_timeframe
         intervals = [interval, "1d"] if interval != "1d" else ["1d"]
 
-    for sym in symbols:
-        for interval in intervals:
-            rows = args.rows if (args.rows and len(intervals) == 1 and len(symbols) == 1) else _DEFAULT_ROWS.get(interval, 1_500)
-            out = settings.ohlcv_csv_path(sym, interval)
-            backfill(client, sym, interval, rows, out)
+    try:
+        for sym in symbols:
+            for interval in intervals:
+                rows = (
+                    args.rows
+                    if (args.rows and len(intervals) == 1 and len(symbols) == 1)
+                    else _DEFAULT_ROWS.get(interval, 1_500)
+                )
+                out = settings.ohlcv_csv_path(sym, interval)
+                backfill(client, sym, interval, rows, out)
+    finally:
+        close_client(client)
 
 
 if __name__ == "__main__":

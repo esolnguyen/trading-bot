@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from src.domain.analysis import Signal
-from src.domain.market import MarketSnapshot, OHLCVCandle
-from src.services.analysis import IndicatorCalculator, TechnicalAnalyzer
+from src.mcp_servers.shared.domain.analysis import Signal
+from src.mcp_servers.shared.domain.market import MarketSnapshot, OHLCVCandle
+from src.legacy.services.analysis import IndicatorCalculator, TechnicalAnalyzer
 
 
-def build_candles(length: int = 60, *, start: float = 100.0, step: float = -1.0) -> list[OHLCVCandle]:
+def build_candles(
+    length: int = 60, *, start: float = 100.0, step: float = -1.0
+) -> list[OHLCVCandle]:
     candles: list[OHLCVCandle] = []
     price = start
     for index in range(length):

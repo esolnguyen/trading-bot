@@ -9,10 +9,15 @@ from pathlib import Path
 
 from rich.console import Console
 
-from src.domain.analysis import IndicatorSet, PatternResult, Signal, TechnicalAnalysis
-from src.domain.trading import Action, TradeDecision, TradeOutcome
-from src.infrastructure.storage import Persistence
-from src.interfaces.notifiers import ConsoleNotifier, LoggerNotifier
+from src.mcp_servers.shared.domain.analysis import (
+    IndicatorSet,
+    PatternResult,
+    Signal,
+    TechnicalAnalysis,
+)
+from src.legacy.domain.trading import Action, TradeDecision, TradeOutcome
+from src.mcp_servers.rag_mcp.storage import Persistence
+from src.legacy.interfaces.notifiers import ConsoleNotifier, LoggerNotifier
 
 
 def sample_outcome() -> TradeOutcome:
@@ -57,7 +62,12 @@ def sample_analysis() -> TechnicalAnalysis:
 
 
 def sample_patterns() -> PatternResult:
-    return PatternResult(symbol="BTCUSDT", patterns=["double_bottom"], support=62000.0, resistance=65000.0)
+    return PatternResult(
+        symbol="BTCUSDT",
+        patterns=["double_bottom"],
+        support=62000.0,
+        resistance=65000.0,
+    )
 
 
 def test_logs_directory_created_automatically(tmp_path: Path) -> None:
@@ -95,7 +105,11 @@ def test_each_trade_cycle_appends_one_json_line(tmp_path: Path) -> None:
         rag_docs_retrieved=4,
         llm_decision="BUY",
         llm_usage={"prompt_tokens": 123, "completion_tokens": 45, "total_tokens": 168},
-        llm_prompt={"system_prompt": "system", "user_message": "user", "chart_included": False},
+        llm_prompt={
+            "system_prompt": "system",
+            "user_message": "user",
+            "chart_included": False,
+        },
         llm_raw_response='{"action":"BUY"}',
         decision_source="grok",
         decision_reasoning="Momentum aligned",
@@ -113,7 +127,11 @@ def test_each_trade_cycle_appends_one_json_line(tmp_path: Path) -> None:
         rag_docs_retrieved=5,
         llm_decision="HOLD",
         llm_usage={"prompt_tokens": 100, "completion_tokens": 10, "total_tokens": 110},
-        llm_prompt={"system_prompt": "system", "user_message": "user", "chart_included": False},
+        llm_prompt={
+            "system_prompt": "system",
+            "user_message": "user",
+            "chart_included": False,
+        },
         llm_raw_response=None,
         decision_source="fallback_hold",
         decision_reasoning="request_failed",

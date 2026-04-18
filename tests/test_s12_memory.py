@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.core.config import Settings
-from src.domain.trading import Action, TradeDecision, TradeOutcome
-from src.infrastructure.storage import ChromaStore
-from src.services.rag import MemoryManager
+from src.mcp_servers.config import Settings
+from src.legacy.domain.trading import Action, TradeDecision, TradeOutcome
+from src.mcp_servers.rag_mcp.storage import ChromaStore
+from src.legacy.services.rag import MemoryManager
 
 
 def build_store(tmp_path: Path) -> ChromaStore:
@@ -85,7 +85,9 @@ def test_pure_hold_is_not_recorded(tmp_path: Path) -> None:
     assert store.count("trade_memory") == 0
 
 
-def test_dry_run_executed_decision_is_recorded_with_dry_run_metadata(tmp_path: Path) -> None:
+def test_dry_run_executed_decision_is_recorded_with_dry_run_metadata(
+    tmp_path: Path,
+) -> None:
     store = build_store(tmp_path)
     manager = MemoryManager(store, id_factory=lambda: "trade-1")
 

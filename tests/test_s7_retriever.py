@@ -4,13 +4,19 @@ from __future__ import annotations
 
 import time
 
-from src.domain.analysis import IndicatorSet, Signal, TechnicalAnalysis
-from src.domain.market import MarketSnapshot, OHLCVCandle
-from src.services.rag import RAGRetriever
+from src.mcp_servers.shared.domain.analysis import (
+    IndicatorSet,
+    Signal,
+    TechnicalAnalysis,
+)
+from src.mcp_servers.shared.domain.market import MarketSnapshot, OHLCVCandle
+from src.legacy.services.rag import RAGRetriever
 
 
 class FakeStore:
-    def __init__(self, responses: dict[str, dict], counts: dict[str, int] | None = None) -> None:
+    def __init__(
+        self, responses: dict[str, dict], counts: dict[str, int] | None = None
+    ) -> None:
         self.responses = responses
         self.counts = counts or {name: 1 for name in ("news", "macro", "trade_memory")}
         self.queries: list[tuple[str, str, int]] = []
@@ -20,11 +26,15 @@ class FakeStore:
 
     def query(self, collection_name: str, query_text: str, n_results: int) -> dict:
         self.queries.append((collection_name, query_text, n_results))
-        return self.responses.get(collection_name, {"documents": [[]], "metadatas": [[]]})
+        return self.responses.get(
+            collection_name, {"documents": [[]], "metadatas": [[]]}
+        )
 
 
 def snapshot_fixture() -> MarketSnapshot:
-    candle = OHLCVCandle(timestamp=1, open=100.0, high=101.0, low=99.0, close=100.0, volume=1000.0)
+    candle = OHLCVCandle(
+        timestamp=1, open=100.0, high=101.0, low=99.0, close=100.0, volume=1000.0
+    )
     return MarketSnapshot(
         symbol="BTCUSDT",
         price=64000.0,
@@ -58,7 +68,9 @@ def analysis_fixture() -> TechnicalAnalysis:
 
 
 def test_returns_no_context_when_all_collections_empty() -> None:
-    retriever = RAGRetriever(FakeStore({}, counts={"news": 0, "macro": 0, "trade_memory": 0}))
+    retriever = RAGRetriever(
+        FakeStore({}, counts={"news": 0, "macro": 0, "trade_memory": 0})
+    )
 
     result = retriever.retrieve(snapshot_fixture(), analysis_fixture())
 
@@ -71,15 +83,41 @@ def test_returns_formatted_context_under_character_budget() -> None:
             {
                 "news": {
                     "documents": [["Bitcoin body"]],
-                    "metadatas": [[{"title": "Bitcoin rally", "source": "example", "published_at": "2026-03-25", "body": "Bitcoin body"}]],
+                    "metadatas": [
+                        [
+                            {
+                                "title": "Bitcoin rally",
+                                "source": "example",
+                                "published_at": "2026-03-25",
+                                "body": "Bitcoin body",
+                            }
+                        ]
+                    ],
                 },
                 "macro": {
                     "documents": [["Macro text"]],
-                    "metadatas": [[{"source": "coingecko", "narrative": "Market sentiment is improving."}]],
+                    "metadatas": [
+                        [
+                            {
+                                "source": "coingecko",
+                                "narrative": "Market sentiment is improving.",
+                            }
+                        ]
+                    ],
                 },
                 "trade_memory": {
                     "documents": [["Trade memory"]],
-                    "metadatas": [[{"symbol": "BTCUSDT", "action": "BUY", "timestamp": "2026-03-24T00:00:00Z", "reasoning": "Momentum aligned", "outcome_pnl": 12.5}]],
+                    "metadatas": [
+                        [
+                            {
+                                "symbol": "BTCUSDT",
+                                "action": "BUY",
+                                "timestamp": "2026-03-24T00:00:00Z",
+                                "reasoning": "Momentum aligned",
+                                "outcome_pnl": 12.5,
+                            }
+                        ]
+                    ],
                 },
             }
         )
@@ -99,11 +137,28 @@ def test_filters_news_to_symbol_relevant_documents_when_possible() -> None:
             {
                 "news": {
                     "documents": [["Bitcoin body", "TRX body", "Ethereum body"]],
-                    "metadatas": [[
-                        {"title": "Bitcoin rally", "source": "example", "published_at": "2026-03-25", "body": "Bitcoin body"},
-                        {"title": "TRX breakout", "source": "example", "published_at": "2026-03-25", "body": "TRX body"},
-                        {"title": "Ethereum strength", "source": "example", "published_at": "2026-03-25", "body": "Ethereum body"},
-                    ]],
+                    "metadatas": [
+                        [
+                            {
+                                "title": "Bitcoin rally",
+                                "source": "example",
+                                "published_at": "2026-03-25",
+                                "body": "Bitcoin body",
+                            },
+                            {
+                                "title": "TRX breakout",
+                                "source": "example",
+                                "published_at": "2026-03-25",
+                                "body": "TRX body",
+                            },
+                            {
+                                "title": "Ethereum strength",
+                                "source": "example",
+                                "published_at": "2026-03-25",
+                                "body": "Ethereum body",
+                            },
+                        ]
+                    ],
                 },
                 "macro": {"documents": [[]], "metadatas": [[]]},
                 "trade_memory": {"documents": [[]], "metadatas": [[]]},
@@ -126,10 +181,24 @@ def test_filters_trade_memory_to_same_symbol() -> None:
                 "macro": {"documents": [[]], "metadatas": [[]]},
                 "trade_memory": {
                     "documents": [["btc trade", "eth trade"]],
-                    "metadatas": [[
-                        {"symbol": "BTCUSDT", "action": "BUY", "timestamp": "t1", "reasoning": "Momentum aligned", "outcome_pnl": 10.0},
-                        {"symbol": "ETHUSDT", "action": "SELL", "timestamp": "t2", "reasoning": "Reversal", "outcome_pnl": 5.0},
-                    ]],
+                    "metadatas": [
+                        [
+                            {
+                                "symbol": "BTCUSDT",
+                                "action": "BUY",
+                                "timestamp": "t1",
+                                "reasoning": "Momentum aligned",
+                                "outcome_pnl": 10.0,
+                            },
+                            {
+                                "symbol": "ETHUSDT",
+                                "action": "SELL",
+                                "timestamp": "t2",
+                                "reasoning": "Reversal",
+                                "outcome_pnl": 5.0,
+                            },
+                        ]
+                    ],
                 },
             }
         )
@@ -166,21 +235,38 @@ def test_retrieve_is_fast_with_local_store() -> None:
         {
             "news": {
                 "documents": [[long_body] * 5],
-                "metadatas": [[
-                    {"title": f"News {i}", "source": "example", "published_at": "2026-03-25", "body": long_body}
-                    for i in range(5)
-                ]],
+                "metadatas": [
+                    [
+                        {
+                            "title": f"News {i}",
+                            "source": "example",
+                            "published_at": "2026-03-25",
+                            "body": long_body,
+                        }
+                        for i in range(5)
+                    ]
+                ],
             },
             "macro": {
                 "documents": [["macro"] * 3],
-                "metadatas": [[{"source": f"macro-{i}", "narrative": "macro"} for i in range(3)]],
+                "metadatas": [
+                    [{"source": f"macro-{i}", "narrative": "macro"} for i in range(3)]
+                ],
             },
             "trade_memory": {
                 "documents": [["memory"] * 3],
-                "metadatas": [[
-                    {"symbol": "BTCUSDT", "action": "BUY", "timestamp": f"t{i}", "reasoning": "reasoning", "outcome_pnl": i}
-                    for i in range(3)
-                ]],
+                "metadatas": [
+                    [
+                        {
+                            "symbol": "BTCUSDT",
+                            "action": "BUY",
+                            "timestamp": f"t{i}",
+                            "reasoning": "reasoning",
+                            "outcome_pnl": i,
+                        }
+                        for i in range(3)
+                    ]
+                ],
             },
         },
         counts={"news": 10, "macro": 10, "trade_memory": 10},

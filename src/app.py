@@ -18,8 +18,13 @@ from typing import Any
 
 from dotenv import load_dotenv, set_key
 
-from src.bootstrap import build_runtime, close_runtime, configure_root_logging, run_guarded
-from src.core.config import Settings
+from src.legacy.bootstrap import (
+    build_runtime,
+    close_runtime,
+    configure_root_logging,
+    run_guarded,
+)
+from src.mcp_servers.config import Settings
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +64,11 @@ def _prompt_runtime_overrides() -> None:
     print("\nRuntime overrides (press Enter to keep current value):")
     updates: dict[str, str] = {}
 
-    new_interval = _prompt_int("BOT_INTERVAL_SECONDS", "BOT_INTERVAL_SECONDS (0 = auto-align to candle)", min_val=0)
+    new_interval = _prompt_int(
+        "BOT_INTERVAL_SECONDS",
+        "BOT_INTERVAL_SECONDS (0 = auto-align to candle)",
+        min_val=0,
+    )
     if new_interval is not None:
         updates["BOT_INTERVAL_SECONDS"] = new_interval
 

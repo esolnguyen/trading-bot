@@ -4,13 +4,20 @@ from __future__ import annotations
 
 import json
 
-from src.domain.analysis import IndicatorSet, PatternResult, Signal, TechnicalAnalysis
-from src.domain.market import MarketSnapshot, OHLCVCandle
-from src.domain.trading import Action, TradeDecision, TradeOutcome
+from src.mcp_servers.shared.domain.analysis import (
+    IndicatorSet,
+    PatternResult,
+    Signal,
+    TechnicalAnalysis,
+)
+from src.mcp_servers.shared.domain.market import MarketSnapshot, OHLCVCandle
+from src.legacy.domain.trading import Action, TradeDecision, TradeOutcome
 
 
 def test_contracts_import_cleanly() -> None:
-    candle = OHLCVCandle(timestamp=1, open=1.0, high=2.0, low=0.5, close=1.5, volume=100.0)
+    candle = OHLCVCandle(
+        timestamp=1, open=1.0, high=2.0, low=0.5, close=1.5, volume=100.0
+    )
     snapshot = MarketSnapshot(
         symbol="BTCUSDT",
         price=60000.0,

@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 
-from src.core.config import Settings
-from src.domain.market import MarketSnapshot
-from src.infrastructure.binance import BinanceFeed
-from src.services.analysis import MarketAggregator
+from binance.error import ClientError
+
+from src.mcp_servers.config import Settings
+from src.mcp_servers.shared.domain.market import MarketSnapshot
+from src.mcp_servers.shared.infrastructure.binance import BinanceFeed
+from src.legacy.services.analysis import MarketAggregator
 
 
 def build_settings() -> Settings:
@@ -21,13 +23,23 @@ def build_settings() -> Settings:
     )
 
 
-class FakeApiClient:
+class _FakeSession:
     def __init__(self) -> None:
-        self.calls: list[tuple[str, dict]] = []
         self.closed = False
 
-    def get_ticker(self, symbol: str) -> dict:
-        self.calls.append(("get_ticker", {"symbol": symbol}))
+    def close(self) -> None:
+        self.closed = True
+
+
+class FakeApiClient:
+    """Stand-in that mimics the SDK surface used by BinanceFeed."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict]] = []
+        self.session = _FakeSession()
+
+    def ticker_24hr_price_change(self, symbol: str) -> dict:
+        self.calls.append(("ticker_24hr_price_change", {"symbol": symbol}))
         return {
             "symbol": symbol,
             "priceChangePercent": "1.25",
@@ -38,31 +50,48 @@ class FakeApiClient:
             "closeTime": 1700000000000,
         }
 
-    def get_order_book(self, symbol: str, limit: int = 20) -> dict:
-        self.calls.append(("get_order_book", {"symbol": symbol, "limit": limit}))
+    def depth(self, symbol: str, limit: int = 20) -> dict:
+        self.calls.append(("depth", {"symbol": symbol, "limit": limit}))
         return {
             "lastUpdateId": 1700000000123,
             "bids": [["63998.5", "1.2"]],
             "asks": [["64001.5", "0.8"]],
         }
 
-    def get_klines(self, symbol: str, interval: str = "1h", limit: int = 200) -> list[list[float]]:
-        self.calls.append(("get_klines", {"symbol": symbol, "interval": interval, "limit": limit}))
+    def klines(
+        self, symbol: str, interval: str = "1h", limit: int = 200
+    ) -> list[list[float]]:
+        self.calls.append(
+            ("klines", {"symbol": symbol, "interval": interval, "limit": limit})
+        )
         assert symbol.endswith("USDT")
         assert interval == "1h"
         assert limit == 200
         return [[1700000000000 + i, 1.0, 2.0, 0.5, 1.5, 100.0] for i in range(limit)]
 
-    def get_account(self) -> dict:
-        self.calls.append(("get_account", {}))
+    def account(self) -> dict:
+        self.calls.append(("account", {}))
         return {"balances": [{"asset": "USDT", "free": "1000", "locked": "0"}]}
 
-    def close_connection(self) -> None:
-        self.closed = True
+    def mark_price(self, symbol: str) -> dict:
+        self.calls.append(("mark_price", {"symbol": symbol}))
+        return {"lastFundingRate": "0.0001", "nextFundingTime": 1700000000000}
+
+    def open_interest(self, symbol: str) -> dict:
+        self.calls.append(("open_interest", {"symbol": symbol}))
+        return {"openInterest": "12345.0"}
 
 
-class RateLimitExceeded(Exception):
-    """Local stand-in for ccxt.RateLimitExceeded in tests."""
+class _FakeClientError(ClientError):
+    """Rate-limit ClientError with status_code=429."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            status_code=429,
+            error_code=-1003,
+            error_message="Too many requests",
+            header={},
+        )
 
 
 class RetryingClient(FakeApiClient):
@@ -70,21 +99,23 @@ class RetryingClient(FakeApiClient):
         super().__init__()
         self._first = True
 
-    def get_klines(self, symbol: str, interval: str = "1h", limit: int = 200) -> list[list[float]]:
+    def klines(
+        self, symbol: str, interval: str = "1h", limit: int = 200
+    ) -> list[list[float]]:
         if self._first:
             self._first = False
-            raise RateLimitExceeded("slow down")
-        return super().get_klines(symbol, interval=interval, limit=limit)
+            raise _FakeClientError()
+        return super().klines(symbol, interval=interval, limit=limit)
 
 
 class ErrorApiClient(FakeApiClient):
-    def get_ticker(self, symbol: str) -> dict:
+    def ticker_24hr_price_change(self, symbol: str) -> dict:
         raise RuntimeError("upstream failure")
 
 
 class FuturesStyleTickerClient(FakeApiClient):
-    def get_ticker(self, symbol: str) -> dict:
-        self.calls.append(("get_ticker", {"symbol": symbol}))
+    def ticker_24hr_price_change(self, symbol: str) -> dict:
+        self.calls.append(("ticker_24hr_price_change", {"symbol": symbol}))
         return {
             "symbol": symbol,
             "priceChangePercent": "1.25",
@@ -144,7 +175,7 @@ def test_rate_limit_is_retried_once(monkeypatch) -> None:
 
     assert len(candles) == 200
     assert sleep_calls == [10]
-    assert any(call[0] == "get_klines" for call in client.calls)
+    assert any(call[0] == "klines" for call in client.calls)
 
 
 def test_api_error_raises_runtime_error() -> None:

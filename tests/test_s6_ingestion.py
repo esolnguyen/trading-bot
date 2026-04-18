@@ -9,10 +9,10 @@ from tempfile import TemporaryDirectory
 
 import requests
 
-from src.core.config import Settings
-from src.infrastructure.storage import ChromaStore
-from src.services.rag.filter import is_relevant_article, truncate_body
-from src.services.rag.ingestion_loop import IngestionLoop
+from src.mcp_servers.config import Settings
+from src.mcp_servers.rag_mcp.storage import ChromaStore
+from src.legacy.services.rag.filter import is_relevant_article, truncate_body
+from src.legacy.services.rag.ingestion_loop import IngestionLoop
 
 
 def build_settings(tmp_path: Path) -> Settings:
@@ -124,7 +124,15 @@ def test_http_500_is_logged_and_loop_continues(tmp_path: Path, caplog) -> None:
         sources={
             "news": Http500Source(),
             "coingecko": FakeMacroSource(
-                [{"source": "coingecko", "metric": "fear", "value": 50, "narrative": "Crypto is calm.", "timestamp": "2026-03-25T00"}]
+                [
+                    {
+                        "source": "coingecko",
+                        "metric": "fear",
+                        "value": 50,
+                        "narrative": "Crypto is calm.",
+                        "timestamp": "2026-03-25T00",
+                    }
+                ]
             ),
             "alternative_me": FakeMacroSource([]),
             "defillama": FakeMacroSource([]),

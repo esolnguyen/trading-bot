@@ -11,14 +11,14 @@ import time
 import pandas as pd
 import streamlit as st
 
-from src.dashboard.loaders import (
+from src.legacy.dashboard.loaders import (
     available_symbols,
     load_cycle_logs,
     load_position,
 )
-from src.dashboard.tabs.logs_chart import render_cycle_logs, render_price_chart
-from src.dashboard.tabs.stats_costs import render_api_costs, render_stats
-from src.dashboard.tabs.trades_portfolio import render_portfolio, render_trades
+from src.legacy.dashboard.tabs.logs_chart import render_cycle_logs, render_price_chart
+from src.legacy.dashboard.tabs.stats_costs import render_api_costs, render_stats
+from src.legacy.dashboard.tabs.trades_portfolio import render_portfolio, render_trades
 
 
 st.set_page_config(
@@ -65,7 +65,9 @@ with col2:
     st.metric("Last signal", last_cycle.get("signal", "—") if last_cycle else "—")
 
 with col3:
-    st.metric("LLM decision", last_cycle.get("llm_decision", "—") if last_cycle else "—")
+    st.metric(
+        "LLM decision", last_cycle.get("llm_decision", "—") if last_cycle else "—"
+    )
 
 with col4:
     if last_cycle:
@@ -85,7 +87,14 @@ st.divider()
 
 
 tab_logs, tab_chart, tab_trades, tab_portfolio, tab_stats, tab_costs = st.tabs(
-    ["📋 Cycle Logs", "📈 Price Chart", "💱 Trades", "💼 Portfolio", "📊 Statistics", "💰 API Costs"]
+    [
+        "📋 Cycle Logs",
+        "📈 Price Chart",
+        "💱 Trades",
+        "💼 Portfolio",
+        "📊 Statistics",
+        "💰 API Costs",
+    ]
 )
 
 with tab_logs:
