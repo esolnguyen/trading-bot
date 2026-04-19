@@ -29,6 +29,16 @@ logger = logging.getLogger(__name__)
 LOOKAHEAD = 6
 THRESHOLD = 0.002
 
+# Crypto microstructure (fee tiers, venue mix, HFT dominance) drifts
+# on a months timescale — training on years of candles pulls the model
+# toward patterns that no longer exist. 180d is ~6 months, enough samples
+# on 15m/1h/4h for a robust fit without dragging in stale regime data.
+DEFAULT_LOOKBACK_DAYS = 180
+
+_CANDLES_PER_DAY = {
+    "1m": 1440, "5m": 288, "15m": 96, "1h": 24, "4h": 6, "1d": 1,
+}
+
 FEATURE_COLS = [
     "rsi_14", "macd_line", "macd_signal", "macd_hist",
     "ema_spread", "ema_20_dist", "ema_50_dist",
@@ -119,6 +129,7 @@ def fit(
     *,
     symbol: str,
     timeframe: str,
+    lookback_days: int = DEFAULT_LOOKBACK_DAYS,
     csv: str | None = None,
     out: str | None = None,
 ) -> None:
@@ -130,7 +141,11 @@ def fit(
     df = pd.read_csv(csv_path)
     df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
     df = df.sort_values("timestamp").reset_index(drop=True)
-    print(f"  {len(df):,} rows loaded")
+
+    rows_for_window = lookback_days * _CANDLES_PER_DAY.get(timeframe, 96)
+    if len(df) > rows_for_window:
+        df = df.tail(rows_for_window).reset_index(drop=True)
+    print(f"  {len(df):,} rows loaded  (lookback={lookback_days}d on {timeframe})")
 
     df = compute_features(df)
 
@@ -203,11 +218,18 @@ def main() -> None:
     parser.add_argument("--symbol", default="btcusdt")
     parser.add_argument("--csv", default=None)
     parser.add_argument("--out", default=None)
+    parser.add_argument(
+        "--lookback-days",
+        type=int,
+        default=DEFAULT_LOOKBACK_DAYS,
+        help="Cap training data to the most recent N days of candles.",
+    )
     args = parser.parse_args()
 
     fit(
         symbol=args.symbol,
         timeframe=args.timeframe,
+        lookback_days=args.lookback_days,
         csv=args.csv,
         out=args.out,
     )

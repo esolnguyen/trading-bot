@@ -29,12 +29,22 @@ logger = logging.getLogger(__name__)
 
 FEATURE_COLS = ["vol_ratio", "price_vel", "high_low_rng"]
 
+# Microstructure baselines (volume patterns, velocity regimes) drift
+# with venue/fee/HFT changes — training on years of candles teaches the
+# detector "normal" behaviour that no longer applies. 180d ≈ 6 months.
+DEFAULT_LOOKBACK_DAYS = 180
+
+_CANDLES_PER_DAY = {
+    "1m": 1440, "5m": 288, "15m": 96, "1h": 24, "4h": 6, "1d": 1,
+}
+
 
 def fit(
     *,
     symbol: str,
     timeframe: str,
-    rows: int = 10_000,
+    lookback_days: int = DEFAULT_LOOKBACK_DAYS,
+    rows: int | None = None,
     contamination: float = 0.01,
     csv: str | None = None,
     out: str | None = None,
@@ -43,7 +53,10 @@ def fit(
     csv_path = csv or f"data/ohlcv/{sym}_{timeframe}.csv"
     out_path = out or f"models/{timeframe}/isolation_forest_{sym}.joblib"
 
-    print(f"Loading {csv_path} (last {rows:,} rows) …")
+    if rows is None:
+        rows = lookback_days * _CANDLES_PER_DAY.get(timeframe, 96)
+
+    print(f"Loading {csv_path} (last {rows:,} rows, ~{lookback_days}d on {timeframe}) …")
     df = pd.read_csv(csv_path)
     df = df.sort_values("timestamp").tail(rows).reset_index(drop=True)
     print(f"  {len(df):,} rows loaded")
@@ -107,13 +120,25 @@ def main() -> None:
     parser.add_argument("--symbol", default="btcusdt")
     parser.add_argument("--csv", default=None)
     parser.add_argument("--out", default=None)
-    parser.add_argument("--rows", type=int, default=10_000)
+    parser.add_argument(
+        "--lookback-days",
+        type=int,
+        default=DEFAULT_LOOKBACK_DAYS,
+        help="Cap training data to the most recent N days of candles.",
+    )
+    parser.add_argument(
+        "--rows",
+        type=int,
+        default=None,
+        help="Raw row cap — overrides --lookback-days when set.",
+    )
     parser.add_argument("--contamination", type=float, default=0.01)
     args = parser.parse_args()
 
     fit(
         symbol=args.symbol,
         timeframe=args.timeframe,
+        lookback_days=args.lookback_days,
         rows=args.rows,
         contamination=args.contamination,
         csv=args.csv,
