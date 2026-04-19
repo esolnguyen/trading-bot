@@ -1,9 +1,7 @@
 """Business logic for the Skills MCP server.
 
-Reads SKILL.md playbooks from ``src/services/llm_trader/skills/``. The
-trading loop keeps its own copy of the read logic in
-``src/services/llm_trader/skills_loader.py`` — both layers share the
-same files on disk so edits flow to both.
+Reads SKILL.md playbooks bundled alongside this server under
+``src/mcp_servers/skills_mcp/skills/``.
 """
 
 from __future__ import annotations
@@ -15,12 +13,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# Skills live inside the trading-loop package but are pure markdown, so
-# we read the files directly (never import trading-loop code per the
-# shared/specific boundary).
-_SKILLS_DIR = (
-    Path(__file__).resolve().parents[2] / "services" / "llm_trader" / "skills"
-)
+_SKILLS_DIR = Path(__file__).resolve().parent / "skills"
 
 
 @dataclass(slots=True, frozen=True)

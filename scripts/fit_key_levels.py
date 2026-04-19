@@ -33,11 +33,11 @@ def main() -> None:
     args = parser.parse_args()
 
     sym = args.symbol.lower() if args.symbol else "btcusdt"
-    sym_prefix = f"{sym}_" if args.symbol else ""
+    sym_suffix = f"_{sym}" if args.symbol else ""
     if args.csv is None:
         args.csv = f"data/ohlcv/{sym}_1d.csv"
     if args.out is None:
-        args.out = f"models/key_levels_{sym_prefix}cache.json"
+        args.out = f"models/1d/key_levels{sym_suffix}_cache.json"
 
     print(f"Loading {args.csv} …")
     df = pd.read_csv(args.csv)

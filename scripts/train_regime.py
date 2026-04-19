@@ -105,11 +105,11 @@ def main() -> None:
     args = parser.parse_args()
 
     sym = args.symbol.lower() if args.symbol else "btcusdt"
-    sym_prefix = f"{sym}_" if args.symbol else ""
+    sym_suffix = f"_{sym}" if args.symbol else ""
     if args.csv is None:
         args.csv = f"data/ohlcv/{sym}_{args.timeframe}.csv"
     if args.out is None:
-        args.out = f"models/regime_classifier_{sym_prefix}{args.timeframe}.joblib"
+        args.out = f"models/{args.timeframe}/regime_classifier{sym_suffix}.joblib"
 
     print(f"Loading {args.csv} …")
     df = pd.read_csv(args.csv)

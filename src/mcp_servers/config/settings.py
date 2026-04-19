@@ -59,11 +59,6 @@ class Settings:
         """True when orders should be simulated instead of placed."""
         return self.bot_mode != "live"
 
-    @property
-    def use_signal_scorer(self) -> bool:
-        """Legacy alias: True when the scorer engine is active."""
-        return self.trading_engine == "scorer"
-
     _CANDLE_SECONDS: dict[str, int] = field(
         default_factory=lambda: {
             "1m": 60,
@@ -240,8 +235,6 @@ class Settings:
     # Futures leverage
     futures_leverage: int = 1
 
-    # Trading engine — which decision path drives the main loop.
-    trading_engine: str = "llm_enriched"
     trader_skills: list[str] = field(
         default_factory=lambda: [
             "candlestick",

@@ -13,7 +13,6 @@ from src.mcp_servers.config.parsers import (
     parse_float,
     parse_int,
     parse_list,
-    parse_trading_engine,
     require_str,
 )
 
@@ -37,7 +36,6 @@ def load_settings_from_env(
     load_dotenv(dotenv_path=env_file, override=False)
 
     bot_mode = parse_bot_mode(os.getenv("BOT_MODE"))
-    trading_engine = parse_trading_engine(os.getenv("TRADING_ENGINE"))
     trader_skills = parse_list(
         os.getenv("TRADER_SKILLS") or os.getenv("LLM_TRADER_SKILLS"),
         default=list(_DEFAULT_TRADER_SKILLS),
@@ -236,8 +234,6 @@ def load_settings_from_env(
         ),
         # Futures leverage
         futures_leverage=parse_int(os.getenv("FUTURES_LEVERAGE"), default=1),
-        # Trading engine
-        trading_engine=trading_engine,
         trader_skills=trader_skills,
         scoring_entry_threshold=parse_float(
             os.getenv("SCORING_ENTRY_THRESHOLD"), default=0.30

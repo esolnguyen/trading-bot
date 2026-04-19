@@ -11,12 +11,6 @@ VALID_PROVIDERS = frozenset(
 
 VALID_BOT_MODES = frozenset({"off", "dry_run", "live"})
 
-# Decision-engine options for the main trading loop:
-#   scorer       — deterministic signal scorer (no LLM calls)
-#   llm_skills   — LLM with playbook skills + chart only (no indicators/ML/RAG)
-#   llm_enriched — LLM with skills + indicators + ML + RAG (full context)
-VALID_TRADING_ENGINES = frozenset({"scorer", "llm_skills", "llm_enriched"})
-
 
 def parse_bool(raw_value: str | None, *, default: bool) -> bool:
     """Parse a boolean environment variable with a safe default."""
@@ -51,25 +45,6 @@ def parse_list(raw_value: str | None, *, default: list[str]) -> list[str]:
     if raw_value is None or raw_value.strip() == "":
         return default
     return [item.strip() for item in raw_value.split(",") if item.strip()]
-
-
-def parse_trading_engine(raw_value: str | None) -> str:
-    """Parse ``TRADING_ENGINE`` → one of {scorer, llm_skills, llm_enriched}.
-
-    Falls back to legacy ``USE_SIGNAL_SCORER`` when TRADING_ENGINE is unset:
-    true → scorer, false → llm_enriched.
-    """
-    if raw_value is not None and raw_value.strip() != "":
-        engine = raw_value.strip().lower().replace("-", "_")
-        if engine not in VALID_TRADING_ENGINES:
-            raise ValueError(
-                "TRADING_ENGINE must be one of: scorer, llm_skills, llm_enriched "
-                f"(got {raw_value!r})"
-            )
-        return engine
-
-    legacy_scorer = parse_bool(os.getenv("USE_SIGNAL_SCORER"), default=False)
-    return "scorer" if legacy_scorer else "llm_enriched"
 
 
 def parse_bot_mode(raw_value: str | None) -> str:

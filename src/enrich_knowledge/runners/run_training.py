@@ -1,13 +1,15 @@
 """Batch training CLI.
 
-One-shot driver: load settings, dispatch to the requested training
-module(s), exit. Never owns a scheduler — retraining cadence is
-enforced externally (systemd timer, cron, GitHub Actions).
+One-shot driver: load settings, backfill OHLCV for every configured
+``(symbol, timeframe)`` pair, then dispatch to the requested training
+module(s). Never owns a scheduler — retraining cadence is enforced
+externally (systemd timer, cron, GitHub Actions).
 
 Usage:
     python -m src.enrich_knowledge.runners.run_training --model all
     python -m src.enrich_knowledge.runners.run_training --model anomaly
     python -m src.enrich_knowledge.runners.run_training --model all --dry-run
+    python -m src.enrich_knowledge.runners.run_training --skip-backfill
 """
 
 from __future__ import annotations
@@ -21,10 +23,10 @@ from src.enrich_knowledge.ml_training import (
     anomaly,
     direction,
     key_levels,
-    outcome,
     regime,
     retrain_all,
 )
+from src.enrich_knowledge.ml_training._runner import run_script
 
 logger = logging.getLogger("enrich_knowledge.runners.training")
 
@@ -37,7 +39,6 @@ MODEL_REGISTRY: dict[str, TrainFn] = {
     "anomaly": anomaly.train,
     "direction": direction.train,
     "key_levels": key_levels.train,
-    "outcome": outcome.train,
     "regime": regime.train,
     "retrain_all": retrain_all.train,
 }
@@ -58,6 +59,29 @@ def _resolve(names: list[str]) -> list[tuple[str, TrainFn]]:
     return out
 
 
+def _backfill_ohlcv(settings: EnrichKnowledgeSettings, dry_run: bool) -> None:
+    """Pull OHLCV for every configured (symbol, timeframe) before training.
+
+    ``scripts/backfill_ohlcv.py`` is incremental: it appends only
+    candles newer than the last row on disk, so running this on every
+    invocation is cheap when the tree is already up to date.
+    """
+    timeframes = settings.ml_training.ml_timeframes
+    symbols = settings.ml_training.training_symbols
+    logger.info(
+        "backfilling OHLCV for %d symbol(s) x %d timeframe(s)",
+        len(symbols), len(timeframes),
+    )
+    for symbol in symbols:
+        for timeframe in timeframes:
+            extra = ["--symbol", symbol, "--interval", timeframe]
+            rc = run_script("backfill_ohlcv.py", dry_run=dry_run, extra_args=extra)
+            if rc != 0 and not dry_run:
+                logger.warning(
+                    "backfill for %s %s returned %d", symbol, timeframe, rc
+                )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -73,6 +97,11 @@ def main() -> None:
         "--dry-run",
         action="store_true",
         help="Resolve inputs, print the training plan, skip writing.",
+    )
+    parser.add_argument(
+        "--skip-backfill",
+        action="store_true",
+        help="Skip the OHLCV backfill step (use when CSVs are known fresh).",
     )
     parser.add_argument(
         "--log-level",
@@ -97,6 +126,9 @@ def main() -> None:
         return
 
     settings = EnrichKnowledgeSettings.load()
+
+    if not args.skip_backfill:
+        _backfill_ohlcv(settings, args.dry_run)
 
     for name, fn in targets:
         logger.info("training %s (dry_run=%s)", name, args.dry_run)

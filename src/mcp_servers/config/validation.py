@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING
 from src.mcp_servers.config.parsers import (
     VALID_BOT_MODES,
     VALID_PROVIDERS,
-    VALID_TRADING_ENGINES,
 )
 
 if TYPE_CHECKING:
@@ -51,12 +50,6 @@ def validate_ranges(settings: "Settings") -> None:
     if settings.bot_mode not in VALID_BOT_MODES:
         raise ValueError(
             f"bot_mode must be one of: off, dry_run, live (got {settings.bot_mode!r})"
-        )
-
-    if settings.trading_engine not in VALID_TRADING_ENGINES:
-        raise ValueError(
-            "trading_engine must be one of: scorer, llm_skills, llm_enriched "
-            f"(got {settings.trading_engine!r})"
         )
 
     if not (1 <= settings.futures_leverage <= 125):
