@@ -11,6 +11,11 @@ import logging
 from time import time
 
 from src.config import BinanceSettings
+from src.mcp_servers.analysis_mcp.backtest import (
+    BacktestResult,
+    Direction,
+    run_backtest,
+)
 from src.mcp_servers.analysis_mcp.indicators import TechnicalIndicators
 from src.mcp_servers.shared import (
     BinanceFeed,
@@ -128,3 +133,59 @@ class AnalysisToolsService:
             return 0
         latest_ms = int(candles[-1].timestamp)
         return max(0, int(time()) - latest_ms // 1000)
+
+    async def run_signal_backtest(
+        self,
+        symbol: str,
+        timeframe: str,
+        *,
+        lookback: int,
+        warmup: int,
+        fee_bps: float,
+        slippage_bps: float,
+        direction: Direction,
+        choppiness_threshold: float = 61.8,
+        rsi_strong_buy: float = 30.0,
+        rsi_buy: float = 40.0,
+        rsi_sell: float = 60.0,
+        rsi_strong_sell: float = 70.0,
+    ) -> tuple[BacktestResult, list[OHLCVCandle]]:
+        """Walk-forward backtest of the ``analyze_signal`` decision rule.
+
+        Pulls ``lookback`` candles, reproduces the directional signal at
+        every bar from ``warmup`` onward, and simulates the resulting
+        close-to-close PnL. Returns the raw result plus the evaluated
+        candle slice for downstream serialisation.
+        """
+        candles = await self.fetch_candles(symbol, timeframe, lookback)
+        if len(candles) <= warmup + 1:
+            raise ValueError(
+                f"insufficient_candles: received {len(candles)}, need >{warmup + 1}"
+            )
+
+        analyzer = self.technical_analyzer()
+        evaluated = candles[warmup:]
+        signals: list[str] = []
+        for i in range(len(evaluated)):
+            window = candles[: warmup + i + 1]
+            snapshot = self.build_snapshot(symbol.upper(), window)
+            analysis = analyzer.analyze(
+                symbol.upper(),
+                snapshot,
+                choppiness_threshold=choppiness_threshold,
+                rsi_strong_buy=rsi_strong_buy,
+                rsi_buy=rsi_buy,
+                rsi_sell=rsi_sell,
+                rsi_strong_sell=rsi_strong_sell,
+            )
+            signals.append(analysis.signal.value)
+
+        result = run_backtest(
+            evaluated,
+            signals,
+            timeframe=timeframe,
+            fee_bps=fee_bps,
+            slippage_bps=slippage_bps,
+            direction=direction,
+        )
+        return result, evaluated

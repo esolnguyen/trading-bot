@@ -109,3 +109,48 @@ class SnapshotResponse(BaseModel):
     funding_rate: float | None
     open_interest: float | None
     freshness_seconds: int
+
+
+Direction = Literal["long_short", "long_only"]
+
+
+class BacktestTradeModel(BaseModel):
+    entry_ts: int
+    exit_ts: int
+    side: Literal["LONG", "SHORT"]
+    entry_price: float
+    exit_price: float
+    pnl_pct: float
+
+
+class BacktestMetricsModel(BaseModel):
+    total_return_pct: float
+    cagr_pct: float
+    sharpe: float
+    max_drawdown_pct: float
+    win_rate_pct: float
+    num_trades: int
+    turnover: float
+    time_in_market_pct: float
+
+
+class BacktestAssumptions(BaseModel):
+    fee_bps: float
+    slippage_bps: float
+    direction: Direction
+    warmup_bars: int
+    bars_evaluated: int
+
+
+class BacktestSignalResponse(BaseModel):
+    success: bool = True
+    symbol: str
+    timeframe: str
+    start_ts: int
+    end_ts: int
+    metrics: BacktestMetricsModel
+    trades: list[BacktestTradeModel]
+    equity_curve: list[float]
+    assumptions: BacktestAssumptions
+    caveats: list[str]
+    freshness_seconds: int

@@ -21,12 +21,16 @@ from collections.abc import Callable
 from src.enrich_knowledge.config import EnrichKnowledgeSettings
 from src.enrich_knowledge.ml_training import (
     anomaly,
+    backfill_ohlcv,
     direction,
     key_levels,
     regime,
     retrain_all,
 )
-from src.enrich_knowledge.ml_training._runner import run_script
+from src.mcp_servers.shared.infrastructure.binance.client import (
+    build_client,
+    close_client,
+)
 
 logger = logging.getLogger("enrich_knowledge.runners.training")
 
@@ -62,24 +66,36 @@ def _resolve(names: list[str]) -> list[tuple[str, TrainFn]]:
 def _backfill_ohlcv(settings: EnrichKnowledgeSettings, dry_run: bool) -> None:
     """Pull OHLCV for every configured (symbol, timeframe) before training.
 
-    ``scripts/backfill_ohlcv.py`` is incremental: it appends only
-    candles newer than the last row on disk, so running this on every
-    invocation is cheap when the tree is already up to date.
+    Calls ``backfill_ohlcv.backfill`` in-process. The function is
+    incremental: it appends only candles newer than the last row on
+    disk, so running this on every invocation is cheap when the tree
+    is already up to date.
     """
     timeframes = settings.ml_training.ml_timeframes
-    symbols = settings.ml_training.training_symbols
+    symbols = [s.upper() for s in settings.ml_training.training_symbols]
     logger.info(
         "backfilling OHLCV for %d symbol(s) x %d timeframe(s)",
         len(symbols), len(timeframes),
     )
-    for symbol in symbols:
-        for timeframe in timeframes:
-            extra = ["--symbol", symbol, "--interval", timeframe]
-            rc = run_script("backfill_ohlcv.py", dry_run=dry_run, extra_args=extra)
-            if rc != 0 and not dry_run:
-                logger.warning(
-                    "backfill for %s %s returned %d", symbol, timeframe, rc
-                )
+
+    if dry_run:
+        for symbol in symbols:
+            for timeframe in timeframes:
+                logger.info("[dry-run] would backfill %s %s", symbol, timeframe)
+        return
+
+    client = build_client(settings.binance)
+    try:
+        for symbol in symbols:
+            for timeframe in timeframes:
+                rows = backfill_ohlcv.DEFAULT_ROWS.get(timeframe, 1_500)
+                out = settings.storage.ohlcv_csv_path(symbol, timeframe)
+                try:
+                    backfill_ohlcv.backfill(client, symbol, timeframe, rows, out)
+                except Exception:
+                    logger.exception("backfill failed for %s %s", symbol, timeframe)
+    finally:
+        close_client(client)
 
 
 def main() -> None:

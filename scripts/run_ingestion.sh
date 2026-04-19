@@ -1,0 +1,1 @@
+python -m src.enrich_knowledge.runners.run_ingestion

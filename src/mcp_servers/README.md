@@ -91,9 +91,10 @@ Five servers × one launcher each — enable whichever you need.
   `analysis/indicators/` (category computations), `skills/skills/`
   (SKILL.md files).
 
-**Never** import from `src.legacy.*` or `src.services.*` inside
-`src/mcp_servers/`. If you need something that lives there, extract
-it into `shared/` or the server's folder first.
+**Never** import from `src.trading_bot.*` inside `src/mcp_servers/`.
+MCP servers are consumed by the trading loop, never the other way
+around — anything both sides need belongs in `shared/` or
+`src/config/`.
 
 ## Adding a new tool
 

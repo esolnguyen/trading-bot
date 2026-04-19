@@ -17,8 +17,13 @@ from pydantic import Field
 
 from src.mcp_servers.analysis_mcp.indicator_catalog import run_indicator
 from src.mcp_servers.analysis_mcp.schemas import (
+    BacktestAssumptions,
+    BacktestMetricsModel,
+    BacktestSignalResponse,
+    BacktestTradeModel,
     CategoryIndicatorResponse,
     ChartResponse,
+    Direction,
     IndicatorSeries,
     IndicatorSnapshot,
     IndicatorsResponse,
@@ -219,6 +224,109 @@ def register(mcp: FastMCP, service: AnalysisToolsService) -> None:
             ).model_dump()
         except Exception as exc:  # noqa: BLE001
             logger.exception("analyze_signal failed")
+            return tool_error(f"{type(exc).__name__}: {exc}")
+
+    @mcp.tool()
+    async def backtest_signal(
+        symbol: _SymbolField = "BTCUSDT",
+        timeframe: Timeframe = "1h",
+        lookback: Annotated[int, Field(ge=200, le=5000)] = 1000,
+        warmup: Annotated[int, Field(ge=50, le=1000)] = 200,
+        fee_bps: Annotated[float, Field(ge=0.0, le=100.0)] = 10.0,
+        slippage_bps: Annotated[float, Field(ge=0.0, le=100.0)] = 5.0,
+        direction: Direction = "long_short",
+        choppiness_threshold: Annotated[float, Field(ge=0.0, le=100.0)] = 61.8,
+        rsi_strong_buy: Annotated[float, Field(ge=0.0, le=100.0)] = 30.0,
+        rsi_buy: Annotated[float, Field(ge=0.0, le=100.0)] = 40.0,
+        rsi_sell: Annotated[float, Field(ge=0.0, le=100.0)] = 60.0,
+        rsi_strong_sell: Annotated[float, Field(ge=0.0, le=100.0)] = 70.0,
+        max_trades_returned: Annotated[int, Field(ge=0, le=2000)] = 200,
+        max_equity_points: Annotated[int, Field(ge=50, le=5000)] = 500,
+    ) -> dict:
+        """Historical backtest of the ``analyze_signal`` rule on a single symbol.
+
+        Walks ``lookback`` closed candles, reproduces the directional signal
+        at every bar from ``warmup`` onward, and simulates close-to-close
+        PnL. Returns annualised Sharpe, max drawdown, win rate, trade list,
+        and a downsampled equity curve.
+        """
+        if warmup >= lookback:
+            return tool_error(
+                "warmup_must_be_less_than_lookback",
+                warmup=warmup,
+                lookback=lookback,
+            )
+        try:
+            result, evaluated = await service.run_signal_backtest(
+                symbol,
+                timeframe,
+                lookback=lookback,
+                warmup=warmup,
+                fee_bps=fee_bps,
+                slippage_bps=slippage_bps,
+                direction=direction,
+                choppiness_threshold=choppiness_threshold,
+                rsi_strong_buy=rsi_strong_buy,
+                rsi_buy=rsi_buy,
+                rsi_sell=rsi_sell,
+                rsi_strong_sell=rsi_strong_sell,
+            )
+
+            trades = result.trades[-max_trades_returned:] if max_trades_returned else []
+            curve = _downsample(result.metrics.equity_curve, max_equity_points)
+
+            caveats = [
+                "single-symbol, close-to-close simulation; intrabar execution ignored",
+                "funding/OI not replayed — backtest uses price signal only",
+                "costs are flat bps on notional; real maker/taker schedule may differ",
+                f"sample size: {result.bars_evaluated} bars",
+            ]
+            if result.metrics.num_trades < 30:
+                caveats.append(
+                    "fewer than 30 trades — metrics are high-variance, treat as indicative"
+                )
+
+            return BacktestSignalResponse(
+                symbol=symbol.upper(),
+                timeframe=timeframe,
+                start_ts=evaluated[0].timestamp,
+                end_ts=evaluated[-1].timestamp,
+                metrics=BacktestMetricsModel(
+                    total_return_pct=result.metrics.total_return_pct,
+                    cagr_pct=result.metrics.cagr_pct,
+                    sharpe=result.metrics.sharpe,
+                    max_drawdown_pct=result.metrics.max_drawdown_pct,
+                    win_rate_pct=result.metrics.win_rate_pct,
+                    num_trades=result.metrics.num_trades,
+                    turnover=result.metrics.turnover,
+                    time_in_market_pct=result.metrics.time_in_market_pct,
+                ),
+                trades=[
+                    BacktestTradeModel(
+                        entry_ts=t.entry_ts,
+                        exit_ts=t.exit_ts,
+                        side=t.side,
+                        entry_price=t.entry_price,
+                        exit_price=t.exit_price,
+                        pnl_pct=t.pnl_pct,
+                    )
+                    for t in trades
+                ],
+                equity_curve=curve,
+                assumptions=BacktestAssumptions(
+                    fee_bps=fee_bps,
+                    slippage_bps=slippage_bps,
+                    direction=direction,
+                    warmup_bars=warmup,
+                    bars_evaluated=result.bars_evaluated,
+                ),
+                caveats=caveats,
+                freshness_seconds=service.freshness_seconds(evaluated),
+            ).model_dump()
+        except ValueError as exc:
+            return tool_error(str(exc), symbol=symbol, timeframe=timeframe)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("backtest_signal failed")
             return tool_error(f"{type(exc).__name__}: {exc}")
 
     @mcp.tool()
@@ -488,6 +596,20 @@ def register(mcp: FastMCP, service: AnalysisToolsService) -> None:
             last_n,
             candle_limit,
         )
+
+
+def _downsample(series: list[float], max_points: int) -> list[float]:
+    """Keep the series small in tool responses without distorting the shape.
+
+    Preserves the final point so the reported equity matches ``total_return``.
+    """
+    if len(series) <= max_points:
+        return list(series)
+    stride = max(1, len(series) // max_points)
+    sampled = series[::stride]
+    if sampled[-1] != series[-1]:
+        sampled.append(series[-1])
+    return sampled
 
 
 async def _run_category(

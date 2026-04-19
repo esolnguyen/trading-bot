@@ -63,9 +63,15 @@ Batch driver — loads settings, dispatches to the requested model(s),
 exits. Never owns a scheduler; put cadence in cron or a systemd timer.
 
 `MODEL_REGISTRY` keys: `anomaly`, `direction`, `key_levels`,
-`outcome`, `regime`, `retrain_all`. The last is a staleness-triggered
+`regime`, `retrain_all`. The last is a staleness-triggered
 orchestrator safe for weekly cron — skips models whose on-disk
 artifact is still fresh or whose training data is insufficient.
+
+Every invocation first backfills OHLCV (incremental append) for
+every `(symbol × timeframe)` pair in `MLTrainingSettings`; pass
+`--skip-backfill` when the CSVs are known fresh. Artifacts land in
+`models/<timeframe>/<family>_<symbol>.joblib` so timeframes can be
+retrained in parallel without stomping on each other.
 
 ## Adding a new ingestion source
 
@@ -85,13 +91,19 @@ The writer is usually `chroma_macro.write_records` or
 
 ## Adding a new ML training driver
 
-1. Create `ml_training/<name>.py` with `def train(settings, dry_run=False) -> None`.
-   Use `._runner.run_script("train_<name>.py", dry_run=dry_run, extra_args=[...])`
-   to shell out to the existing script under `scripts/`.
+1. Create `ml_training/<name>.py` with:
+   - `def fit(*, symbol, timeframe, ...) -> None` — the library entrypoint
+     that loads the CSV, fits the model, and writes the artifact.
+   - `def train(settings, dry_run=False) -> None` — iterates the
+     configured `(symbol, timeframe)` pairs and calls `fit()` in-process.
+     Catches per-pair exceptions so one failure does not abort the batch.
+   - Optional `def main()` + `if __name__ == "__main__":` block for
+     ad-hoc single-model refits (`python -m src.enrich_knowledge.ml_training.<name>`).
 2. Register it in `runners/run_training.MODEL_REGISTRY`.
 
-Later phases can extract the fit logic into library functions and
-drop the subprocess bridge without changing the driver surface.
+Do not shell out to a subprocess — call the fit function directly.
+The driver, the batch runner, and the ad-hoc CLI all share the same
+library function.
 
 ## Trade memory (called from the trading loop)
 
@@ -145,9 +157,10 @@ relevant `jobs/<name>.py` and commit.
    trade_memory appends and prunes by count.
 4. **Jobs isolate failures.** One bad upstream never takes the
    scheduler down.
-5. **No trading-loop imports.** enrich_knowledge must not pull from
-   `src.legacy.*` or `src.services.*`. Cross the boundary by
-   accepting typed arguments (see `trade_memory_record`).
+5. **No trading-loop imports.** enrich_knowledge must not reach into
+   `src.trading_bot.*`. Cross the boundary by accepting typed
+   arguments (see `trade_memory_record`) so the trading loop is the
+   caller, never the callee.
 
 ## Running under systemd
 

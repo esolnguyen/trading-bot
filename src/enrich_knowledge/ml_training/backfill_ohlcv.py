@@ -24,15 +24,10 @@ from __future__ import annotations
 
 import argparse
 import csv
-import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 from dotenv import load_dotenv
-
-load_dotenv(override=False)
 
 from src.mcp_servers.config import Settings
 from src.mcp_servers.shared.infrastructure.binance.client import (
@@ -42,7 +37,7 @@ from src.mcp_servers.shared.infrastructure.binance.client import (
 
 # Default row counts per interval — enough for full Binance history from 2017.
 # Training scripts will take a recent slice; having more data never hurts.
-_DEFAULT_ROWS: dict[str, int] = {
+DEFAULT_ROWS: dict[str, int] = {
     "1m": 43_200,  # ~30 days (Binance REST keeps ~30 days of 1m data)
     "5m": 17_280,  # ~60 days
     "15m": 70_000,  # ~2 years
@@ -164,6 +159,7 @@ def backfill(
 
 
 def main() -> None:
+    load_dotenv(override=False)
     parser = argparse.ArgumentParser(description="Backfill OHLCV data from Binance")
     parser.add_argument(
         "--symbol", default=None, help="Symbol (default: from CRYPTO_PAIR in .env)"
@@ -206,7 +202,7 @@ def main() -> None:
                 rows = (
                     args.rows
                     if (args.rows and len(intervals) == 1 and len(symbols) == 1)
-                    else _DEFAULT_ROWS.get(interval, 1_500)
+                    else DEFAULT_ROWS.get(interval, 1_500)
                 )
                 out = settings.ohlcv_csv_path(sym, interval)
                 backfill(client, sym, interval, rows, out)
