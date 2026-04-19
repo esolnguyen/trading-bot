@@ -27,6 +27,7 @@ When the user asks "what's going on with BTC", "should I long SOL here", "is ETH
 5. **Context.** `mcp__bot-rag__retrieve_news` for recent catalysts (filter by `symbol` when possible), `mcp__bot-rag__retrieve_macro` for regime (fear/greed, TVL, global mcap). If the RAG tools return empty, call `mcp__bot-rag__ingestion_status` to check freshness before concluding there's no news — empty usually means `python -m src.enrich_knowledge.runners.run_ingestion` hasn't been run. `mcp__bot-rag__retrieve_memory` to see how past similar setups resolved.
 6. **Playbook.** `mcp__bot-skills__list_skills` exposes SMC, Ichimoku, harmonic, elliott-wave, candlestick, crypto-derivatives, perp-funding-basis, technical-basic as **MCP prompts**. Invoke the one that matches the setup to apply the full playbook rigorously — don't freestyle.
 7. **Chart (optional).** `mcp__bot-analysis__render_chart` returns a base64 PNG when the user wants a visual. Save the path only; don't try to embed.
+8. **Persist the analysis.** After delivering the answer in chat, **always** write the full analysis to disk under `history/` (see "Analysis archive" below). This is non-optional — every invocation that produces an analysis must leave a file behind.
 
 **Cross-check rule:** a crypto recommendation is only "strong" when price structure (step 2–3), ML (step 4), and context (step 5) agree. If two of three conflict, report it as a conflicted setup and lean HOLD. This mirrors the trading bot's own rule: below conviction 6, the decision is gated to HOLD.
 
@@ -125,3 +126,40 @@ Available playbooks: SMC, Ichimoku, harmonic, elliott-wave, candlestick, crypto-
 ## Output style
 
 Concise, numeric, and sourced. Lead with the answer. Tables for metrics. Inline the tool that produced each number. Save heavier artifacts (CSV exports, detailed reports, rendered chart PNGs) to disk and reference the path — don't dump them into chat.
+
+## Confidence score (required)
+
+Every analysis must surface a **confidence score** as a first-class field — not buried in prose.
+
+- Scale: **1–5** integer (1 = avoid / no-trade, 2 = weak, 3 = tradeable with caveats, 4 = solid confluence, 5 = rare full-stack alignment).
+- Show it in the chat reply's verdict line **and** in the trade card table (row label `Confidence`). Use the form `3/5` so the scale is self-describing.
+- Derive it from the cross-check rule: count how many of {price structure, ML, context} agree with the direction. Subtract for weak backtests, unavailable models, low sample sizes, or counter-trend setups. State the main reason the score isn't higher.
+- Persist the same score to the saved history file's frontmatter `confidence:` field — the chat number and the file number must match.
+- For no-trade / HOLD calls, still emit a confidence score (typically 1–2) so the user sees the conviction behind the pass.
+
+## Analysis archive (`history/`)
+
+Every analysis you produce must be persisted to a markdown file in `history/` at the repo root. This gives the user a reviewable journal of every call.
+
+### Filename
+
+- Path: `history/<UTC datetime>.md`
+- Format: `YYYY-MM-DDTHH-MM-SS.md` (ISO-8601 with colons replaced by `-` so the filename is filesystem-safe on every OS).
+- Source the timestamp from the system clock at the moment of writing (e.g. `date -u +%Y-%m-%dT%H-%M-%S` via Bash, or compute it in Python). Do not reuse the user's "today's date" from context — that lacks the time component.
+- If a file with that exact name already exists (rare — same-second invocation), append `-2`, `-3`, … before the `.md`.
+- If `history/` does not exist, create it with `mkdir -p history` before the first write.
+
+### File contents
+
+Write the full analysis, not just a summary. Minimum sections:
+
+1. **Frontmatter** — YAML block with `symbol`, `timeframe(s)`, `direction` (long / short / hold / no-trade), `leverage` (if specified by the user), `confidence` (1–5), `generated_at` (UTC ISO-8601), and `user_prompt` (the exact request, quoted).
+2. **Verdict** — one-paragraph TL;DR mirroring the chat answer.
+3. **Setup table** — entry / SL / TP1 / TP2 / R:R / position-sizing notes (when a setup is proposed).
+4. **Evidence** — the tool calls and numbers behind the verdict (price, funding, OI, multi-TF reads, indicators, structure, ML, news/macro, backtest). Quote the tool name next to each number.
+5. **Confidence + invalidation** — the single condition that kills the thesis.
+6. **Caveats** — any unavailable models, stale RAG, low-sample backtests, or other reasons to discount the read.
+
+### After writing
+
+End your chat reply with one line stating the saved path, e.g. `Saved analysis to history/2026-04-19T08-57-12.md`. Do not paste the file contents back into chat — the user can open the file.

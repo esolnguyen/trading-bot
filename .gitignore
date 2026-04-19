@@ -181,6 +181,7 @@ chroma_db/
 data/
 logs/
 models/
+history/
 
 # Local benchmarking artifacts
 .benchmarks/
