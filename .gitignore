@@ -186,4 +186,5 @@ models/
 .benchmarks/
 
 .kiro
-.claude
+.claude/*
+!.claude/agents/
