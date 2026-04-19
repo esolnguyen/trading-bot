@@ -42,10 +42,10 @@ class CycleClassifier:
     """Predict macro market regime from daily OHLCV features."""
 
     def __init__(self, timeframe: str = "4h", symbols: list[str] | None = None) -> None:
-        self._fallback: dict[str, Any] | None = load(f"regime_classifier_{timeframe}")
+        self._fallback: dict[str, Any] | None = load(f"{timeframe}/regime_classifier")
         self._bundles: dict[str, Any] = {}
         for sym in symbols or []:
-            bundle = load(f"regime_classifier_{sym.lower()}_{timeframe}")
+            bundle = load(f"{timeframe}/regime_classifier_{sym.lower()}")
             if bundle is not None:
                 self._bundles[sym.upper()] = bundle
         self._bundle = self._fallback

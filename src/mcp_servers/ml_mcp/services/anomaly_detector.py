@@ -19,10 +19,10 @@ class AnomalyDetector:
     """Detect abnormal market conditions using Isolation Forest."""
 
     def __init__(self, timeframe: str = "4h", symbols: list[str] | None = None) -> None:
-        self._fallback: dict[str, Any] | None = load(f"isolation_forest_{timeframe}")
+        self._fallback: dict[str, Any] | None = load(f"{timeframe}/isolation_forest")
         self._bundles: dict[str, Any] = {}
         for sym in symbols or []:
-            bundle = load(f"isolation_forest_{sym.lower()}_{timeframe}")
+            bundle = load(f"{timeframe}/isolation_forest_{sym.lower()}")
             if bundle is not None:
                 self._bundles[sym.upper()] = bundle
         # Keep legacy attribute pointing at fallback for external callers

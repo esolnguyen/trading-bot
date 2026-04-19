@@ -20,10 +20,10 @@ class DirectionClassifier:
     """Predict bullish probability from a current indicator snapshot."""
 
     def __init__(self, timeframe: str = "4h", symbols: list[str] | None = None) -> None:
-        self._fallback: dict[str, Any] | None = load(f"xgboost_direction_{timeframe}")
+        self._fallback: dict[str, Any] | None = load(f"{timeframe}/xgboost_direction")
         self._bundles: dict[str, Any] = {}
         for sym in symbols or []:
-            bundle = load(f"xgboost_direction_{sym.lower()}_{timeframe}")
+            bundle = load(f"{timeframe}/xgboost_direction_{sym.lower()}")
             if bundle is not None:
                 self._bundles[sym.upper()] = bundle
         self._bundle = self._fallback

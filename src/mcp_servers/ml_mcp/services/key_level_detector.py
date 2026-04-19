@@ -20,20 +20,20 @@ class KeyLevelDetector:
     """Surface major historical S/R levels from a cached DBSCAN result."""
 
     def __init__(self, symbols: list[str] | None = None) -> None:
-        self._fallback: dict[str, Any] | None = load_json("key_levels_cache")
+        self._fallback: dict[str, Any] | None = load_json("1d/key_levels_cache")
         self._caches: dict[str, Any] = {}
         for sym in symbols or []:
-            cache = load_json(f"key_levels_{sym.lower()}_cache")
+            cache = load_json(f"1d/key_levels_{sym.lower()}_cache")
             if cache is not None:
                 self._caches[sym.upper()] = cache
         self._cache = self._fallback
 
     def reload(self) -> None:
         """Refresh all caches from disk (call daily)."""
-        self._fallback = load_json("key_levels_cache")
+        self._fallback = load_json("1d/key_levels_cache")
         self._cache = self._fallback
         for sym in list(self._caches.keys()):
-            cache = load_json(f"key_levels_{sym.lower()}_cache")
+            cache = load_json(f"1d/key_levels_{sym.lower()}_cache")
             if cache is not None:
                 self._caches[sym] = cache
 
