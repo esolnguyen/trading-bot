@@ -30,7 +30,12 @@ def fit(
     csv: str | None = None,
     out: str | None = None,
     lookback: int = 365,
-    eps_pct: float = 0.003,
+    # 0.5% chosen over the original 0.3% after walk-forward backtesting
+    # showed eps=0.003 packs ~15 levels so densely that ~half of all
+    # daily candles sit within ±2% of one (lift ≈ 1.0 — no edge). At
+    # eps=0.005 + 0.5% touch zone, ETH pooled lift jumps to 1.64.
+    # See docs/ml-backtest.md for the full run.
+    eps_pct: float = 0.005,
 ) -> None:
     sym = symbol.lower()
     csv_path = csv or f"data/ohlcv/{sym}_1d.csv"
@@ -105,7 +110,7 @@ def main() -> None:
     parser.add_argument("--csv", default=None)
     parser.add_argument("--out", default=None)
     parser.add_argument("--lookback", type=int, default=365)
-    parser.add_argument("--eps-pct", type=float, default=0.003)
+    parser.add_argument("--eps-pct", type=float, default=0.005)
     args = parser.parse_args()
 
     fit(

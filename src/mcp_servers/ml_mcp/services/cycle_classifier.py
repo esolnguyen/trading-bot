@@ -14,6 +14,11 @@ from .model_store import load
 
 logger = logging.getLogger(__name__)
 
+# Default text reflects BTC's trend-following structure on a 30d
+# forward horizon (BULL_TRENDING median +1.3%, BEAR_TRENDING median
+# −0.7%). Each symbol whose forward-return distribution diverges from
+# this directional alignment goes in REGIME_INSTRUCTIONS_OVERRIDES.
+# See docs/ml-backtest.md (A4 section) for the empirical grounding.
 REGIME_INSTRUCTIONS: dict[str, str] = {
     "BULL_TRENDING": (
         "MACRO REGIME: BULL MARKET (trending). "
@@ -35,6 +40,38 @@ REGIME_INSTRUCTIONS: dict[str, str] = {
         "Reduce trade frequency. Only trade at clear range extremes. "
         "Widen stops to avoid noise. Favour smaller position sizes."
     ),
+}
+
+# ETH on a 30d forward horizon mean-reverts: BEAR_TRENDING samples
+# (n=741) actually preceded +5.4% mean / +1.9% median 30d return,
+# while BULL_TRENDING preceded −0.2% median. Using the BTC text would
+# steer the LLM the wrong way. Numbers are pooled walk-forward,
+# 2019–2026, see docs/ml-backtest.md.
+REGIME_INSTRUCTIONS_OVERRIDES: dict[str, dict[str, str]] = {
+    "ETHUSDT": {
+        "BULL_TRENDING": (
+            "MACRO REGIME: BULL CONTEXT (extended). "
+            "On ETH, late-trend price tends to flatten/mean-revert over the next month — "
+            "do not assume continuation. Wait for fresh strength before adding LONG; "
+            "rotate out of stale longs if structure weakens."
+        ),
+        "BULL_CORRECTION": (
+            "MACRO REGIME: BULL CORRECTION (deep on ETH). "
+            "Drawdowns inside ETH bull markets historically extend further than BTC's. "
+            "Wait for clear support reclaim before LONG re-entry; do not catch the knife."
+        ),
+        "BEAR_TRENDING": (
+            "MACRO REGIME: OVERSOLD-BIASED. "
+            "ETH BEAR_TRENDING historically precedes a positive 30d return as price reverts to mean. "
+            "Look for LONG entries at strong support with confirmation — avoid fresh SHORT entries "
+            "unless structure breaks meaningfully lower."
+        ),
+        "ACCUMULATION": (
+            "MACRO REGIME: ACCUMULATION (volatile on ETH). "
+            "30d outcome distribution is wide and skews slightly negative on the median. "
+            "Trade only at clear range extremes; favour small sizes and patience over directional bias."
+        ),
+    },
 }
 
 
@@ -73,9 +110,22 @@ class CycleClassifier:
             logger.warning("CycleClassifier.predict failed: %s", exc)
             return None
 
-    def regime_system_prompt_suffix(self, regime: str, confidence: float) -> str:
-        """Return text to append to the system prompt for the given regime."""
-        instruction = REGIME_INSTRUCTIONS.get(regime, "")
+    def regime_system_prompt_suffix(
+        self, regime: str, confidence: float, symbol: str | None = None
+    ) -> str:
+        """Return text to append to the system prompt for the given regime.
+
+        Looks up a per-symbol override first (e.g. ETH mean-reverts on a
+        30d horizon, so its instructions invert the BTC defaults), then
+        falls back to ``REGIME_INSTRUCTIONS``.
+        """
+        instruction = ""
+        if symbol:
+            instruction = REGIME_INSTRUCTIONS_OVERRIDES.get(
+                symbol.upper(), {}
+            ).get(regime, "")
+        if not instruction:
+            instruction = REGIME_INSTRUCTIONS.get(regime, "")
         if not instruction:
             return ""
         return f"\n\n{instruction} (model confidence: {confidence:.0%})"
