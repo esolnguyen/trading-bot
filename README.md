@@ -23,6 +23,9 @@ src/
 └── config/             # Cross-cutting BinanceSettings / StorageSettings
 ```
 
+See [docs/overview.md](docs/overview.md) for the full architecture and
+[docs/mcp-servers.md](docs/mcp-servers.md) for per-server tool surfaces.
+
 Three independent processes at runtime:
 
 ```
@@ -75,13 +78,13 @@ TRADING_SYMBOLS=BTCUSDT,ETHUSDT
 Three commands, three runtimes:
 
 ```bash
-# Trading agent (one decision per tick)
+# Trading agent (one decision per tick) — see docs/overview.md
 python -m src.app
 
-# News/macro ingestion into ChromaDB (long-running)
+# News/macro ingestion into ChromaDB (long-running) — see docs/data.md
 python -m src.enrich_knowledge.runners.run_ingestion
 
-# Train every ML model (one-shot; backfills OHLCV first)
+# Train every ML model (one-shot; backfills OHLCV first) — see docs/training.md, docs/ml-models.md
 python -m src.enrich_knowledge.runners.run_training --model all
 ```
 
