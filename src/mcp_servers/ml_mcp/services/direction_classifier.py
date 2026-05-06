@@ -52,7 +52,11 @@ class DirectionClassifier:
         try:
             model = bundle["model"]
             feature_cols: list[str] = bundle["feature_cols"]
-            row = self._indicators_to_row(indicators, feature_cols, price, history)
+            symbol_map: dict[str, int] | None = bundle.get("symbol_map")
+            row = self._indicators_to_row(
+                indicators, feature_cols, price, history,
+                symbol=symbol, symbol_map=symbol_map,
+            )
             if row is None:
                 return None
             proba = model.predict_proba([row])[0][1]
@@ -94,6 +98,9 @@ class DirectionClassifier:
         feature_cols: list[str],
         price: float | None,
         history: deque | None = None,
+        *,
+        symbol: str | None = None,
+        symbol_map: dict[str, int] | None = None,
     ) -> list[float] | None:
         """Map IndicatorSet fields to the feature vector used at training time."""
         mapping: dict[str, float] = {}
@@ -163,6 +170,14 @@ class DirectionClassifier:
         mapping["adx_lag1"] = hist[-1][2] if len(hist) >= 1 else cur_adx
         mapping["adx_lag2"] = hist[-2][2] if len(hist) >= 2 else cur_adx
         mapping["adx_lag3"] = hist[-3][2] if len(hist) >= 3 else cur_adx
+
+        # Pooled-training symbol id. Bundle's `symbol_map` is the
+        # source of truth; an unseen symbol gets -1 so the model knows
+        # it's out-of-distribution rather than reading as BTCUSDT (id 0).
+        if symbol_map is not None:
+            mapping["symbol_id"] = float(symbol_map.get((symbol or "").upper(), -1))
+        else:
+            mapping["symbol_id"] = 0.0
 
         try:
             return [mapping.get(c, 0.0) for c in feature_cols]

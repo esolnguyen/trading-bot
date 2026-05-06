@@ -24,6 +24,7 @@ from src.enrich_knowledge.ml_training import (
     backfill_ohlcv,
     direction,
     key_levels,
+    outcome,
     regime,
     retrain_all,
 )
@@ -43,6 +44,7 @@ MODEL_REGISTRY: dict[str, TrainFn] = {
     "anomaly": anomaly.train,
     "direction": direction.train,
     "key_levels": key_levels.train,
+    "outcome": outcome.train,
     "regime": regime.train,
     "retrain_all": retrain_all.train,
 }

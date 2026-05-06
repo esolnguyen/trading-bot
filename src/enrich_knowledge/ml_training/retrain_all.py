@@ -17,7 +17,7 @@ from pathlib import Path
 
 from src.enrich_knowledge.config import EnrichKnowledgeSettings
 
-from . import anomaly, direction, key_levels, regime
+from . import anomaly, direction, key_levels, outcome, regime
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +42,8 @@ _TASKS: tuple[_Task, ...] = (
           "models/*/xgboost_direction*.joblib", 7.0, "15m", 5_000),
     _Task("Regime Classifier (RF A4)", "regime", regime.train,
           "models/1d/regime_classifier*.joblib", 30.0, "1d", 200),
+    _Task("Outcome Predictor (LogReg B3)", "outcome", outcome.train,
+          "models/outcome_predictor*.joblib", 7.0, "4h", 1_500),
 )
 
 
