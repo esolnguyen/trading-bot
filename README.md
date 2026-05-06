@@ -1,20 +1,24 @@
-# trading-bot
+# bot
 
-A LangChain/LangGraph trading agent fed by five in-process MCP servers.
-Every tick the agent pulls market data, indicators, ML predictions, and
-retrieved context from the servers, cross-checks signals, and emits one
-`TradingDecision` per symbol.
+A personal crypto research and trading workspace built around five
+in-process **MCP servers**. The same servers feed:
 
-Live order execution is **gated** — the bot refuses to start with
-`BOT_MODE=live` until the Phase 7 execution MCP ships. Today it runs as
-either `off` (always HOLD) or `dry_run` (logs a `[would-trade]` line).
+- a LangGraph **trading agent** (`src/trading_bot/`) that emits one
+  `TradingDecision` per symbol per tick, and
+- the **`/trade`** Claude skill, a hands-on analyst you call from
+  Claude Code or Claude Desktop to research a coin, validate a setup,
+  or backtest a rule.
+
+Live order execution is gated. `BOT_MODE=live` is refused at startup
+until the Phase 7 execution server ships; today the bot only runs in
+`off` (always HOLD) or `dry_run` (logs `[would-trade]`).
 
 ## Layout
 
 ```
 src/
-├── trading_bot/        # LangGraph agent + daemon runner  (the bot itself)
-├── mcp_servers/        # 5 read-path MCP servers         (ml · binance · analysis · rag · skills)
+├── mcp_servers/        # 5 read-path MCP servers (binance · analysis · ml · rag · skills)
+├── trading_bot/        # LangGraph agent + daemon runner
 ├── enrich_knowledge/   # Write path: RAG ingestion + ML training
 └── config/             # Cross-cutting BinanceSettings / StorageSettings
 ```
@@ -23,27 +27,39 @@ Three independent processes at runtime:
 
 ```
 ┌──────────────────────────┐    ┌────────────────────────────┐
-│ enrich_knowledge         │───▶│ chroma_db/ + models/       │
-│   run_ingestion (long)   │    │ (shared on disk)           │
+│ enrich_knowledge         │───▶│ chroma_db/  +  models/     │
+│   run_ingestion (daemon) │    │ data/ohlcv/  (shared disk) │
 │   run_training (one-off) │    └──────────────┬─────────────┘
 └──────────────────────────┘                   │
                                                ▼
                        ┌────────────────────────────────────┐
-                       │ trading_bot/runner                 │
+                       │ trading_bot.runner   OR   /trade   │
                        │   spawns 5 MCP servers via stdio   │
-                       │   → ReAct agent → TradingDecision  │
+                       │   → ReAct / Claude → decision      │
                        └────────────────────────────────────┘
 ```
 
-Deeper docs live in [`docs/`](./docs) — start with `docs/running.md`
-for operational setup and `docs/mcp-migration-plan.md` for the MCP
-architecture.
+## Documentation map
+
+Start with the doc that matches your goal:
+
+| If you want to…                                        | Read              |
+|--------------------------------------------------------|-------------------|
+| Understand the project at a glance                     | [docs/overview.md](docs/overview.md)         |
+| Wire up the 5 MCP servers and call them                | [docs/mcp-servers.md](docs/mcp-servers.md)   |
+| Know what each ML model does and how it was validated  | [docs/ml-models.md](docs/ml-models.md)       |
+| Train (or retrain) those models                        | [docs/training.md](docs/training.md)         |
+| Understand the data on disk                            | [docs/data.md](docs/data.md)                 |
+| Use the `/trade` skill in Claude                       | [docs/trade-skill.md](docs/trade-skill.md)   |
+
+Project conventions for Claude sessions live in
+[`CLAUDE.md`](CLAUDE.md).
 
 ## Quick start
 
 ```bash
 pip install -r requirements.txt
-cp .env.example .env        # then fill in Anthropic + Binance keys
+cp .env.example .env       # fill Anthropic + Binance keys
 ```
 
 Minimum `.env` for a dry-run tick:
@@ -56,31 +72,34 @@ BINANCE_API_SECRET=...
 TRADING_SYMBOLS=BTCUSDT,ETHUSDT
 ```
 
-Run the bot:
+Three commands, three runtimes:
 
 ```bash
-python -m src.app                          # or: python scripts/run_trading_bot.py
-```
+# Trading agent (one decision per tick)
+python -m src.app
 
-Ingest news/macro into ChromaDB (long-running):
-
-```bash
+# News/macro ingestion into ChromaDB (long-running)
 python -m src.enrich_knowledge.runners.run_ingestion
-```
 
-Train all ML models (one-shot; backfills OHLCV then writes
-`models/<tf>/<family>_<symbol>.joblib`):
-
-```bash
+# Train every ML model (one-shot; backfills OHLCV first)
 python -m src.enrich_knowledge.runners.run_training --model all
 ```
+
+Register the 5 MCP servers with Claude Code in one shot:
+
+```bash
+bash scripts/install_mcp_servers.sh    # adds bot-binance, bot-analysis, bot-ml, bot-rag, bot-skills
+```
+
+After that, run `/trade BTC 4h, what's the read?` in Claude — see
+[docs/trade-skill.md](docs/trade-skill.md).
 
 ## Smoke tests
 
 ```bash
-python -m pytest tests/                    # 24 unit tests, no network
+python -m pytest tests/                       # unit tests, no network
 
-python -c "                                # imports + config gate
+python -c "                                   # imports + config gate
 from dotenv import load_dotenv; load_dotenv()
 from src.trading_bot.config import TradingBotSettings
 TradingBotSettings().assert_runnable()
@@ -93,36 +112,16 @@ End-to-end tick (costs Anthropic tokens — shorten the interval first):
 TRADING_DECISION_INTERVAL_SECONDS=60 python -m src.app
 ```
 
-## Configuration
-
-`.env` is the single source of truth. The important knobs:
-
-| Var                                 | Default             | Purpose                                       |
-|-------------------------------------|---------------------|-----------------------------------------------|
-| `BOT_MODE`                          | `dry_run`           | `off` / `dry_run` / `live` (live is refused)  |
-| `TRADING_SYMBOLS`                   | `BTCUSDT`           | CSV, uppercased on load                       |
-| `TRADING_TIMEFRAME`                 | `15m`               | Primary TF the agent focuses on each tick     |
-| `TRADING_DECISION_INTERVAL_SECONDS` | `900`               | Sleep between ticks                           |
-| `TRADING_MIN_CONVICTION`            | `6`                 | Below this, LONG/SHORT gets gated to HOLD     |
-| `LLM_MODEL`                         | `claude-sonnet-4-6` | Any model `langchain-anthropic` accepts       |
-| `LLM_MAX_ITERATIONS`                | `12`                | Recursion cap inside the ReAct graph          |
-| `ML_TIMEFRAMES`                     | `15m,1h,4h,1d`      | Timeframes trained by `run_training`          |
-| `TRAINING_SYMBOLS`                  | `BTCUSDT,ETHUSDT`   | Symbol universe for training                  |
-
-See `.env.example` for the full list including Binance + ingestion
-keys. Each package also has its own README with the knobs it owns
-([`src/trading_bot/README.md`](./src/trading_bot/README.md),
-[`src/mcp_servers/README.md`](./src/mcp_servers/README.md),
-[`src/enrich_knowledge/README.md`](./src/enrich_knowledge/README.md)).
-
 ## Repository conventions
 
 - Python 3.12, pydantic v2, pydantic-settings v2.
 - `dict` / `list` / `X | None` — no `typing.Dict` / `Optional[X]`.
 - `Callable` / `Iterable` / `Mapping` from `collections.abc`.
-- MCP server files (`server.py` / `handlers.py` / `schemas.py`)
-  **never** get `from __future__ import annotations` — FastMCP's
-  `TypeAdapter` can't resolve stringified hints.
+- MCP server modules (`server.py` / `handlers.py` / `schemas.py`)
+  must **never** add `from __future__ import annotations` — FastMCP's
+  `TypeAdapter` cannot resolve stringified hints.
 - Comments explain *why*, not *what*. Default to no comment.
+- No emojis in code, comments, or commit messages unless explicitly
+  requested.
 
-More rules live in `CLAUDE.md`; it's the canonical reference.
+The full ruleset lives in [`CLAUDE.md`](CLAUDE.md).
