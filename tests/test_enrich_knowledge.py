@@ -10,6 +10,7 @@ EXPECTED_MODEL_KEYS = {
     "anomaly",
     "direction",
     "key_levels",
+    "outcome",
     "regime",
     "retrain_all",
 }

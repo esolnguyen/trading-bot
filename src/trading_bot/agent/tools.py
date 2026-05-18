@@ -22,11 +22,11 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 # Name → launcher script. Names become the tool prefix the adapter
 # emits (e.g. ``ml__predict_direction``), so keep them short and stable.
 MCP_SERVER_LAUNCHERS: dict[str, str] = {
-    "ml": "scripts/run_mcp_ml.py",
-    "binance": "scripts/run_mcp_binance.py",
-    "analysis": "scripts/run_mcp_analysis.py",
-    "rag": "scripts/run_mcp_rag.py",
-    "skills": "scripts/run_mcp_skills.py",
+    "ml": "scripts/mcp/run_mcp_ml.py",
+    "binance": "scripts/mcp/run_mcp_binance.py",
+    "analysis": "scripts/mcp/run_mcp_analysis.py",
+    "rag": "scripts/mcp/run_mcp_rag.py",
+    "skills": "scripts/mcp/run_mcp_skills.py",
 }
 
 
