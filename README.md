@@ -1,4 +1,4 @@
-# bot
+# Crypto Trading Bot
 
 A personal crypto research and trading workspace built around five
 in-process **MCP servers**. The same servers feed:
@@ -127,4 +127,3 @@ TRADING_DECISION_INTERVAL_SECONDS=60 python -m src.app
 - No emojis in code, comments, or commit messages unless explicitly
   requested.
 
-The full ruleset lives in [`CLAUDE.md`](CLAUDE.md).
