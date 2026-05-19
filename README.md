@@ -55,9 +55,6 @@ Start with the doc that matches your goal:
 | Understand the data on disk                            | [docs/data.md](docs/data.md)                 |
 | Use the `/trade` skill in Claude                       | [docs/trade-skill.md](docs/trade-skill.md)   |
 
-Project conventions for Claude sessions live in
-[`CLAUDE.md`](CLAUDE.md).
-
 ## Quick start
 
 ```bash
