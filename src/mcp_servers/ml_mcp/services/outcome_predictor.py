@@ -9,6 +9,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from src.features.outcome import outcome_row_from_conditions
+
 from .model_store import load
 
 logger = logging.getLogger(__name__)
@@ -50,18 +52,5 @@ class OutcomePredictor:
     def _conditions_to_row(
         conditions: dict[str, Any], feature_cols: list[str]
     ) -> list[float]:
-        mapping: dict[str, float] = {
-            "rsi": float(conditions.get("rsi", 50)),
-            "adx": float(conditions.get("adx", 20)),
-            "atr_pct": float(conditions.get("atr_percentage", 1.5)),
-            "trend": (
-                1.0
-                if conditions.get("trend_direction") == "BULLISH"
-                else (-1.0 if conditions.get("trend_direction") == "BEARISH" else 0.0)
-            ),
-            "vol_state": 1.0 if conditions.get("volume_state") == "HIGH" else 0.0,
-            "bb_pos": {"UPPER": 1.0, "MIDDLE": 0.0, "LOWER": -1.0}.get(
-                str(conditions.get("bb_position", "MIDDLE")), 0.0
-            ),
-        }
-        return [mapping.get(c, 0.0) for c in feature_cols]
+        # Shared with the trainer's feature contract — see features.outcome.
+        return outcome_row_from_conditions(conditions, feature_cols)

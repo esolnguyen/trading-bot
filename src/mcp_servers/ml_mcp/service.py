@@ -18,6 +18,12 @@ from src.mcp_servers.shared import (
     MarketSnapshot,
     OHLCVCandle,
 )
+from src.features.outcome import (
+    bb_position_label,
+    trend_label,
+    vol_state_label,
+)
+from src.features.regime import regime_features_from_candles
 from src.mcp_servers.ml_mcp.services import (
     AnomalyDetector,
     CycleClassifier,
@@ -119,49 +125,12 @@ class MLToolsService:
     def build_cycle_features(candles: list[OHLCVCandle]) -> dict[str, float]:
         """Build the daily feature dict that CycleClassifier expects.
 
-        Mirrors ``TradingContext._refresh_regime`` — kept inline to avoid
-        coupling MCP to trading loop internals.
+        Delegates to the shared ``compute_regime_features`` used by the
+        trainer, so the served vector matches training exactly — including
+        a real ADX (the old inline builder hardcoded ``adx_14 = 0``) and a
+        consistently-computed EMA slope.
         """
-        closes = [c.close for c in candles]
-        highs = [c.high for c in candles]
-        lows = [c.low for c in candles]
-
-        def ema(series: list[float], p: int) -> float:
-            k = 2.0 / (p + 1)
-            v = series[0]
-            for x in series[1:]:
-                v = x * k + v * (1 - k)
-            return v
-
-        c = closes[-1]
-        e50 = ema(closes[-50:], 50)
-        e100 = ema(closes[-100:], 100)
-        e200 = ema(closes, 200)
-        h52w = max(highs[-365:]) if len(highs) >= 365 else max(highs)
-        l52w = min(lows[-365:]) if len(lows) >= 365 else min(lows)
-
-        realized_vol = (
-            sum((closes[i] / closes[i - 1] - 1) ** 2 for i in range(-30, 0)) / 30
-        ) ** 0.5 * (365**0.5)
-
-        return {
-            "ema50_dist": (c - e50) / e50 if e50 else 0.0,
-            "ema100_dist": (c - e100) / e100 if e100 else 0.0,
-            "ema200_dist": (c - e200) / e200 if e200 else 0.0,
-            "ema50_slope": (
-                (ema(closes[-10:], 10) - ema(closes[-15:-5], 10)) / e50 if e50 else 0.0
-            ),
-            "high_52w_dist": (c - h52w) / h52w if h52w else 0.0,
-            "low_52w_dist": (c - l52w) / l52w if l52w else 0.0,
-            "adx_14": 0.0,
-            "realized_vol": realized_vol,
-            "hh_count": sum(
-                1 for i in range(-89, 0) if i + 1 < 0 and highs[i] > highs[i - 1]
-            ),
-            "ll_count": sum(
-                1 for i in range(-89, 0) if i + 1 < 0 and lows[i] < lows[i - 1]
-            ),
-        }
+        return regime_features_from_candles(candles, timeframe="1d")
 
     # ── key level detector (get_key_levels) ──────────────────────────────
 
@@ -195,38 +164,25 @@ class MLToolsService:
     def build_market_conditions(indicators: Any, price: float) -> dict[str, Any]:
         """Derive the OutcomePredictor input dict from an indicator snapshot.
 
-        Mirrors ``SignalScorer._build_market_conditions`` so the gate-side
-        feature assembly stays identical between trading loop and MCP.
+        Bucketing thresholds + source indicators come from the shared
+        ``features.outcome`` module — the same ones the trainer used — so the
+        gate predicts on the feature space it was fit on. (The old version
+        keyed ``volume_state`` off ``obv_slope`` and used ADX/Bollinger
+        thresholds that differed from training.)
         """
         atr_pct = (indicators.atr / price * 100) if price > 0 else 0.0
-        ema_bull = indicators.ema_20 > indicators.ema_50
-
-        if indicators.adx >= 25:
-            trend = "BULLISH" if ema_bull else "BEARISH"
-        else:
-            trend = "NEUTRAL"
-
-        vol_state = "HIGH" if indicators.obv_slope > 0.5 else "NORMAL"
+        ema_spread = indicators.ema_20 - indicators.ema_50
 
         bb_width = indicators.bb_upper - indicators.bb_lower
-        if bb_width > 0:
-            bb_pos_val = (price - indicators.bb_lower) / bb_width
-            if bb_pos_val > 0.8:
-                bb_position = "UPPER"
-            elif bb_pos_val < 0.2:
-                bb_position = "LOWER"
-            else:
-                bb_position = "MIDDLE"
-        else:
-            bb_position = "MIDDLE"
+        bb_pos_val = (price - indicators.bb_lower) / bb_width if bb_width > 0 else 0.5
 
         return {
             "rsi": indicators.rsi_14,
             "adx": indicators.adx,
             "atr_percentage": atr_pct,
-            "trend_direction": trend,
-            "volume_state": vol_state,
-            "bb_position": bb_position,
+            "trend_direction": trend_label(ema_spread, indicators.adx),
+            "volume_state": vol_state_label(indicators.vol_ratio),
+            "bb_position": bb_position_label(bb_pos_val),
         }
 
     # ── sentiment scorer (score_sentiment) ───────────────────────────────

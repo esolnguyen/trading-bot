@@ -32,12 +32,19 @@ from sklearn.metrics import classification_report
 from sklearn.model_selection import TimeSeriesSplit
 
 from src.enrich_knowledge.config import EnrichKnowledgeSettings
+from src.features.regime import (
+    CANDLES_PER_DAY as _CPD,
+)
+from src.features.regime import (
+    REGIME_FEATURE_COLS as FEATURE_COLS,
+)
+from src.features.regime import (
+    compute_regime_features as compute_features,
+)
 
 logger = logging.getLogger(__name__)
 
 _REGIME_TIMEFRAME = "1d"
-
-_CPD = {"1d": 1, "4h": 6, "1h": 24, "15m": 96}
 
 # Forward window used for labelling. 60 calendar days = a full
 # trend/correction cycle in crypto without being so long that the regime
@@ -56,58 +63,6 @@ _T_RUNUP_CORRECTION = 0.05 # correction bars saw a meaningful runup
 _T_DRAWDOWN_CORRECTION = -0.10  # ... AND a deeper pullback
 _T_RUNUP_RANGE = 0.10
 _T_DRAWDOWN_RANGE = -0.10
-
-
-FEATURE_COLS = [
-    "ema50_dist", "ema100_dist", "ema200_dist",
-    "ema50_slope", "ema200_slope",
-    "high_52w_dist", "low_52w_dist",
-    "adx_14", "realized_vol",
-    "hh_count", "ll_count",
-]
-
-
-def compute_features(df: pd.DataFrame, timeframe: str = "1d") -> pd.DataFrame:
-    c = df["close"]
-    h = df["high"]
-    l = df["low"]
-
-    cpd = _CPD[timeframe]
-
-    for span in [50, 100, 200]:
-        ema = c.ewm(span=span * cpd, adjust=False).mean()
-        df[f"ema{span}_dist"] = (c - ema) / ema
-        df[f"ema{span}_slope"] = ema.diff(5 * cpd) / ema
-
-    w365 = 365 * cpd
-    w90 = 90 * cpd
-    w30 = 30 * cpd
-    df["high_52w_dist"] = (c - h.rolling(w365, min_periods=w365 // 12).max()) / c
-    df["low_52w_dist"] = (c - l.rolling(w365, min_periods=w365 // 12).min()) / c
-
-    adx_com = 13 * cpd
-    up = h.diff()
-    down = -l.diff()
-    pdm = up.where((up > down) & (up > 0), 0.0)
-    mdm = down.where((down > up) & (down > 0), 0.0)
-    prev_c = c.shift(1)
-    tr = pd.concat([h - l, (h - prev_c).abs(), (l - prev_c).abs()], axis=1).max(axis=1)
-    atr14 = tr.ewm(com=adx_com, adjust=False).mean()
-    pdi = 100 * pdm.ewm(com=adx_com, adjust=False).mean() / atr14.replace(0, np.nan)
-    mdi = 100 * mdm.ewm(com=adx_com, adjust=False).mean() / atr14.replace(0, np.nan)
-    dx = 100 * (pdi - mdi).abs() / (pdi + mdi).replace(0, np.nan)
-    df["adx_14"] = dx.ewm(com=adx_com, adjust=False).mean()
-
-    df["realized_vol"] = c.pct_change().rolling(w30).std() * np.sqrt(365 * cpd)
-
-    df["hh_count"] = h.rolling(w90).apply(
-        lambda x: sum(x[i] > x[i - 1] for i in range(1, len(x))), raw=True
-    )
-    df["ll_count"] = l.rolling(w90).apply(
-        lambda x: sum(x[i] < x[i - 1] for i in range(1, len(x))), raw=True
-    )
-
-    return df
 
 
 def forward_labels(close: pd.Series, horizon_bars: int) -> np.ndarray:

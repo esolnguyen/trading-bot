@@ -24,10 +24,14 @@ import pandas as pd
 from sklearn.ensemble import IsolationForest
 
 from src.enrich_knowledge.config import EnrichKnowledgeSettings
+from src.features.microstructure import (
+    ANOMALY_FEATURE_COLS as FEATURE_COLS,
+)
+from src.features.microstructure import (
+    anomaly_features_frame,
+)
 
 logger = logging.getLogger(__name__)
-
-FEATURE_COLS = ["vol_ratio", "price_vel", "high_low_rng"]
 
 # Microstructure baselines (volume patterns, velocity regimes) drift
 # with venue/fee/HFT changes — training on years of candles teaches the
@@ -61,14 +65,7 @@ def fit(
     df = df.sort_values("timestamp").tail(rows).reset_index(drop=True)
     print(f"  {len(df):,} rows loaded")
 
-    c = df["close"]
-    v = df["volume"]
-    h = df["high"]
-    l = df["low"]
-
-    df["vol_ratio"] = v / v.rolling(20).mean()
-    df["price_vel"] = c.pct_change(3) * 100
-    df["high_low_rng"] = (h - l) / ((h + l) / 2) * 100
+    df = anomaly_features_frame(df)
 
     df = df.dropna(subset=FEATURE_COLS)
     X = df[FEATURE_COLS].values

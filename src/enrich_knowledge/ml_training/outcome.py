@@ -48,6 +48,12 @@ from src.enrich_knowledge.ml_training.direction import (
     sample_uniqueness,
     triple_barrier_labels,
 )
+from src.features.outcome import (
+    OUTCOME_FEATURE_COLS,
+    bucket_bb_pos,
+    bucket_trend,
+    bucket_vol_state,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -57,32 +63,9 @@ _CANDLES_PER_DAY = {
     "1m": 1440, "5m": 288, "15m": 96, "1h": 24, "4h": 6, "1d": 1,
 }
 
-# Must match OutcomePredictor._conditions_to_row exactly.
-FEATURE_COLS = ["rsi", "adx", "atr_pct", "trend", "vol_state", "bb_pos"]
-
-
-def _bucket_trend(ema_spread: pd.Series, adx: pd.Series) -> pd.Series:
-    """Map (ema20-ema50, adx) → -1 / 0 / +1 to mirror the inference path,
-    which reads ``market_conditions['trend_direction']`` ∈ BULLISH/BEARISH/NEUTRAL."""
-    out = pd.Series(0.0, index=ema_spread.index)
-    bullish = (ema_spread > 0) & (adx >= 20)
-    bearish = (ema_spread < 0) & (adx >= 20)
-    out[bullish] = 1.0
-    out[bearish] = -1.0
-    return out
-
-
-def _bucket_vol_state(vol_ratio: pd.Series) -> pd.Series:
-    """1 if 'HIGH' (vol > 1.5x average) else 0 — mirrors the inference enum."""
-    return (vol_ratio > 1.5).astype(float)
-
-
-def _bucket_bb_pos(bb_pos: pd.Series) -> pd.Series:
-    """Continuous bb_pos ∈ [0,1] → -1 / 0 / +1 to mirror UPPER/MIDDLE/LOWER."""
-    out = pd.Series(0.0, index=bb_pos.index)
-    out[bb_pos > 0.66] = 1.0
-    out[bb_pos < 0.33] = -1.0
-    return out
+# Canonical feature list + bucketing thresholds are shared with the live
+# gate (src.features.outcome) so train/serve cannot drift.
+FEATURE_COLS = OUTCOME_FEATURE_COLS
 
 
 def _build_training_frame(
@@ -111,9 +94,9 @@ def _build_training_frame(
 
     df["rsi"] = df["rsi_14"]
     df["atr_pct"] = df["atr"] / df["close"] * 100
-    df["trend"] = _bucket_trend(df["ema_spread"], df["adx"])
-    df["vol_state"] = _bucket_vol_state(df["vol_ratio"])
-    df["bb_pos"] = _bucket_bb_pos(df["bb_pos"])
+    df["trend"] = bucket_trend(df["ema_spread"], df["adx"])
+    df["vol_state"] = bucket_vol_state(df["vol_ratio"])
+    df["bb_pos"] = bucket_bb_pos(df["bb_pos"])
     df["symbol"] = symbol.upper()
     return df
 

@@ -43,6 +43,10 @@ from sklearn.model_selection import TimeSeriesSplit
 from xgboost import XGBClassifier
 
 from src.enrich_knowledge.config import EnrichKnowledgeSettings
+from src.features.obv import (
+    OBV_SLOPE_PERIOD,
+    rolling_normalized_obv_slope,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -134,8 +138,9 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     bb_width = (df["bb_upper"] - df["bb_lower"]).replace(0, np.nan)
     df["bb_pos"] = (c - df["bb_lower"]) / bb_width
 
-    obv = (np.sign(c.diff()) * v).fillna(0).cumsum()
-    df["obv_slope"] = obv.diff(20) / obv.abs().rolling(20).mean().replace(0, np.nan)
+    df["obv_slope"] = rolling_normalized_obv_slope(
+        c.to_numpy(), v.to_numpy(), OBV_SLOPE_PERIOD
+    )
 
     df["vol_ratio"] = v / v.rolling(20).mean()
 

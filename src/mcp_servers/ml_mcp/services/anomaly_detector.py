@@ -10,6 +10,10 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from src.features.microstructure import (
+    anomaly_features_from_candles,
+)
+
 from .model_store import load
 
 logger = logging.getLogger(__name__)
@@ -60,30 +64,7 @@ class AnomalyDetector:
         snapshot: Any, indicators: Any, feature_cols: list[str]
     ) -> list[float]:
         candles = getattr(snapshot, "candles", []) or []
-        vol_ratio = 0.0
-        price_vel = 0.0
-        hl_range = 0.0
-
-        if len(candles) >= 21:
-            recent_vol = float(candles[-1].volume)
-            vol_sma = sum(float(c.volume) for c in candles[-21:-1]) / 20
-            vol_ratio = recent_vol / vol_sma if vol_sma > 0 else 1.0
-
-        if len(candles) >= 4:
-            c0 = float(candles[-1].close)
-            c3 = float(candles[-4].close)
-            price_vel = (c0 - c3) / c3 * 100 if c3 > 0 else 0.0
-
-        if candles:
-            last = candles[-1]
-            mid = (float(last.high) + float(last.low)) / 2
-            hl_range = (
-                (float(last.high) - float(last.low)) / mid * 100 if mid > 0 else 0.0
-            )
-
-        mapping = {
-            "vol_ratio": vol_ratio,
-            "price_vel": price_vel,
-            "high_low_rng": hl_range,
-        }
+        # Shared with the trainer (features.microstructure) so the volume
+        # baseline window and formulas match exactly.
+        mapping = anomaly_features_from_candles(candles)
         return [mapping.get(c, 0.0) for c in feature_cols]

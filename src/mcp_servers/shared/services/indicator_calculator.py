@@ -205,28 +205,18 @@ class IndicatorCalculator:
 
     @staticmethod
     def _obv_slope(closes: list[float], volumes: list[float], period: int) -> float:
-        """Linear regression slope of OBV over the last `period` bars, normalised by mean OBV."""
-        obv: list[float] = [0.0]
-        for i in range(1, len(closes)):
-            if closes[i] > closes[i - 1]:
-                obv.append(obv[-1] + volumes[i])
-            elif closes[i] < closes[i - 1]:
-                obv.append(obv[-1] - volumes[i])
-            else:
-                obv.append(obv[-1])
+        """Linear regression slope of OBV over the last `period` bars, normalised by mean OBV.
 
-        window = obv[-period:]
-        n = len(window)
-        if n < 2:
-            return 0.0
-        x_mean = (n - 1) / 2.0
-        y_mean = sum(window) / n
-        num = sum((i - x_mean) * (window[i] - y_mean) for i in range(n))
-        den = sum((i - x_mean) ** 2 for i in range(n))
-        slope = num / den if den != 0 else 0.0
-        # Normalise by absolute mean so the value is scale-independent
-        abs_mean = abs(y_mean) if y_mean != 0 else 1.0
-        return slope / abs_mean
+        Delegates to the shared canonical definition so the live value stays
+        identical to the trainer's ``obv_slope`` feature (no train/serve skew).
+        """
+        from src.features.obv import (  # noqa: PLC0415
+            normalized_slope,
+            obv_series,
+        )
+
+        obv = obv_series(closes, volumes)
+        return normalized_slope(obv[-period:])
 
     @staticmethod
     def _cci(
